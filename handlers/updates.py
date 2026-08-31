@@ -1,36 +1,44 @@
+import configparser
+import html
 import os
 import sys
-import shutil
-import zipfile
 import requests
 import subprocess
-import configparser
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize
+from pathlib import Path
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize, QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QLinearGradient, QBrush, QPen, QRadialGradient
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextBrowser, QProgressBar, QApplication, QGraphicsDropShadowEffect,
     QWidget, QFrame, QGraphicsOpacityEffect, QSizePolicy
 )
-from handlers.console import send_messages
+from handlers.console import send_error, send_success, send_system, send_warning
+from handlers.logging import log_error, log_exception, log_info
+from utils.paths import LAUNCHER_CONFIG
+from utils.localization import tr
+from utils.settings_store import get as get_setting, parse_version
 
-API_URL = "https://api.natemarcellus.com/updates/missionlauncher"
-INI_FILE = "launcher_settings.ini"
+API_URL = os.environ.get("MISSION_HELPER_LAUNCHER_UPDATE_URL", "https://api.natemarcellus.com/updates/missionlauncher")
+BOT_UPDATE_API_URL = os.environ.get("MISSION_HELPER_BOT_UPDATE_URL", "https://api.natemarcellus.com/updates/missionchief")
+INI_FILE = str(LAUNCHER_CONFIG)
 
 
 def format_changelog_html(notes):
+    def safe(value):
+        return html.escape(str(value))
+
     if isinstance(notes, dict):
         html = ""
         category_colors = {
-            "Design": "#A855F7",
-            "Functionality": "#6C5CE7",
-            "Bug Fixes": "#EC4899",
-            "Performance": "#F97316",
+            "Design": "#2583E8",
+            "Functionality": "#1D65D8",
+            "Bug Fixes": "#21B8D4",
+            "Performance": "#32B9E8",
             "Security": "#EF4444",
-            "Other": "#53D8FB",
+            "Other": "#27C4E8",
         }
         for category, items in notes.items():
-            color = category_colors.get(category, "#A855F7")
+            color = category_colors.get(category, "#2583E8")
             html += f"""
                 <div style="margin-bottom: 14px;">
                     <div style="
@@ -44,7 +52,7 @@ def format_changelog_html(notes):
                         padding: 3px 0;
                         border-bottom: 1px solid {color}40;
                     ">
-                        ◆&nbsp; {category.upper()}
+                        ◆&nbsp; {safe(category).upper()}
                     </div>
                     <div style="margin-left: 4px;">
             """
@@ -52,23 +60,23 @@ def format_changelog_html(notes):
                 for item in items:
                     html += f"""
                         <div style="
-                            color: #C9C8D0;
+                            color: #C7D8EA;
                             font-size: 13px;
                             padding: 3px 0 3px 12px;
                             line-height: 1.5;
                         ">
-                            <span style="color: {color}80;">●</span>&nbsp;&nbsp;{item}
+                            <span style="color: {color}80;">●</span>&nbsp;&nbsp;{safe(item)}
                         </div>
                     """
             elif isinstance(items, str):
                 html += f"""
                     <div style="
-                        color: #C9C8D0;
+                        color: #C7D8EA;
                         font-size: 13px;
                         padding: 3px 0 3px 12px;
                         line-height: 1.5;
                     ">
-                        <span style="color: {color}80;">●</span>&nbsp;&nbsp;{items}
+                        <span style="color: {color}80;">●</span>&nbsp;&nbsp;{safe(items)}
                     </div>
                 """
             html += "</div></div>"
@@ -79,20 +87,20 @@ def format_changelog_html(notes):
         for item in notes:
             html += f"""
                 <div style="
-                    color: #C9C8D0;
+                    color: #C7D8EA;
                     font-size: 13px;
                     padding: 3px 0 3px 12px;
                     line-height: 1.5;
                 ">
-                    <span style="color: #A855F780;">●</span>&nbsp;&nbsp;{item}
+                    <span style="color: #2583E880;">●</span>&nbsp;&nbsp;{safe(item)}
                 </div>
             """
         return html
 
     elif isinstance(notes, str):
-        return f'<div style="color: #C9C8D0; font-size: 13px; padding: 8px 0;">{notes}</div>'
+        return f'<div style="color: #C7D8EA; font-size: 13px; padding: 8px 0;">{safe(notes)}</div>'
 
-    return '<div style="color: #4A4458; font-size: 13px;">No details provided.</div>'
+    return f'<div style="color: #6688A6; font-size: 13px;">{html.escape(tr("no_details"))}</div>'
 
 
 class AccentBar(QWidget):
@@ -104,10 +112,10 @@ class AccentBar(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         gradient = QLinearGradient(0, 0, self.width(), 0)
-        gradient.setColorAt(0.0, QColor("#6C5CE7"))
-        gradient.setColorAt(0.3, QColor("#A855F7"))
-        gradient.setColorAt(0.6, QColor("#EC4899"))
-        gradient.setColorAt(1.0, QColor("#F97316"))
+        gradient.setColorAt(0.0, QColor("#1D65D8"))
+        gradient.setColorAt(0.3, QColor("#2583E8"))
+        gradient.setColorAt(0.6, QColor("#21B8D4"))
+        gradient.setColorAt(1.0, QColor("#32B9E8"))
         painter.setBrush(QBrush(gradient))
         painter.setPen(Qt.PenStyle.NoPen)
         path = QPainterPath()
@@ -139,14 +147,14 @@ class UpdateIcon(QWidget):
         pulse_factor = self._pulse / 100.0
         glow_opacity = int(20 + pulse_factor * 30)
         glow_gradient = QRadialGradient(28, 28, 28)
-        glow_gradient.setColorAt(0.0, QColor(168, 85, 247, glow_opacity))
-        glow_gradient.setColorAt(1.0, QColor(168, 85, 247, 0))
+        glow_gradient.setColorAt(0.0, QColor(37, 131, 232, glow_opacity))
+        glow_gradient.setColorAt(1.0, QColor(37, 131, 232, 0))
         painter.setBrush(QBrush(glow_gradient))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(0, 0, 56, 56)
         bg_gradient = QLinearGradient(8, 8, 48, 48)
-        bg_gradient.setColorAt(0.0, QColor("#6C5CE7"))
-        bg_gradient.setColorAt(1.0, QColor("#A855F7"))
+        bg_gradient.setColorAt(0.0, QColor("#1D65D8"))
+        bg_gradient.setColorAt(1.0, QColor("#2583E8"))
         painter.setBrush(QBrush(bg_gradient))
         painter.setPen(Qt.PenStyle.NoPen)
         path = QPainterPath()
@@ -225,7 +233,7 @@ class GradientProgressBar(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         bg_path = QPainterPath()
         bg_path.addRoundedRect(0, 0, self.width(), self.height(), 3, 3)
-        painter.setBrush(QBrush(QColor("#1E1B2E")))
+        painter.setBrush(QBrush(QColor("#102640")))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawPath(bg_path)
         if self._indeterminate:
@@ -235,9 +243,9 @@ class GradientProgressBar(QWidget):
             x_end = min(self.width(), center + bar_width / 2)
             if x_end > x_start:
                 gradient = QLinearGradient(x_start, 0, x_end, 0)
-                gradient.setColorAt(0.0, QColor(108, 92, 231, 0))
-                gradient.setColorAt(0.5, QColor(168, 85, 247, 255))
-                gradient.setColorAt(1.0, QColor(236, 72, 153, 0))
+                gradient.setColorAt(0.0, QColor(29, 101, 216, 0))
+                gradient.setColorAt(0.5, QColor(37, 131, 232, 255))
+                gradient.setColorAt(1.0, QColor(33, 184, 212, 0))
                 fill_path = QPainterPath()
                 fill_path.addRoundedRect(x_start, 0, x_end - x_start, self.height(), 3, 3)
                 painter.setBrush(QBrush(gradient))
@@ -246,9 +254,9 @@ class GradientProgressBar(QWidget):
             fill_width = (self._animated_value / 100.0) * self.width()
             if fill_width > 0:
                 gradient = QLinearGradient(0, 0, self.width(), 0)
-                gradient.setColorAt(0.0, QColor("#6C5CE7"))
-                gradient.setColorAt(0.5, QColor("#A855F7"))
-                gradient.setColorAt(1.0, QColor("#EC4899"))
+                gradient.setColorAt(0.0, QColor("#1D65D8"))
+                gradient.setColorAt(0.5, QColor("#2583E8"))
+                gradient.setColorAt(1.0, QColor("#21B8D4"))
                 fill_path = QPainterPath()
                 fill_path.addRoundedRect(0, 0, fill_width, self.height(), 3, 3)
                 painter.setBrush(QBrush(gradient))
@@ -262,7 +270,7 @@ class UpdateDialog(QDialog):
         self.mandatory = mandatory
         self.remote_version = remote_version
         self._drag_pos = None
-        self.setWindowTitle("Update Available")
+        self.setWindowTitle(tr("update_available"))
         self.setFixedSize(520, 580)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -271,9 +279,9 @@ class UpdateDialog(QDialog):
         self.container.setGeometry(0, 0, 520, 580)
         self.container.setStyleSheet("""
             QWidget {
-                background-color: #13111C;
+                background-color: #0B1B2D;
                 border-radius: 16px;
-                border: 1px solid #2A2540;
+                border: 1px solid #1D3B5B;
             }
         """)
 
@@ -300,15 +308,15 @@ class UpdateDialog(QDialog):
             close_btn.setStyleSheet("""
                 QPushButton {
                     background: transparent;
-                    color: #4A4458;
+                    color: #6688A6;
                     font-size: 14px;
                     font-weight: 600;
                     border: none;
                     border-radius: 14px;
                 }
                 QPushButton:hover {
-                    background: #1E1B2E;
-                    color: #9CA3AF;
+                    background: #102640;
+                    color: #A8BCD1;
                 }
             """)
             close_btn.clicked.connect(self.reject)
@@ -331,11 +339,11 @@ class UpdateDialog(QDialog):
         title_block = QVBoxLayout()
         title_block.setSpacing(4)
 
-        title_text = "Required Update" if mandatory else "Update Available"
+        title_text = tr("required_update") if mandatory else tr("update_available")
         title_label = QLabel(title_text)
         title_label.setStyleSheet("""
             QLabel {
-                color: #F1F0F5;
+                color: #EAF4FF;
                 font-size: 20px;
                 font-weight: 700;
                 background: transparent;
@@ -347,7 +355,7 @@ class UpdateDialog(QDialog):
         version_label = QLabel(f"v{local_version}  →  v{remote_version}")
         version_label.setStyleSheet("""
             QLabel {
-                color: #7C7A85;
+                color: #7F9DB8;
                 font-size: 13px;
                 font-weight: 500;
                 background: transparent;
@@ -382,7 +390,7 @@ class UpdateDialog(QDialog):
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
         divider.setFixedHeight(1)
-        divider.setStyleSheet("QFrame { background-color: #1E1B2E; border: none; }")
+        divider.setStyleSheet("QFrame { background-color: #102640; border: none; }")
         content_layout.addWidget(divider)
 
         content_layout.addSpacing(20)
@@ -393,7 +401,7 @@ class UpdateDialog(QDialog):
         dot = QLabel("●")
         dot.setStyleSheet("""
             QLabel {
-                color: #A855F7;
+                color: #2583E8;
                 font-size: 8px;
                 background: transparent;
                 border: none;
@@ -401,10 +409,10 @@ class UpdateDialog(QDialog):
         """)
         section_header.addWidget(dot, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-        changelog_title = QLabel("CHANGELOG")
+        changelog_title = QLabel(tr("changelog"))
         changelog_title.setStyleSheet("""
             QLabel {
-                color: #9CA3AF;
+                color: #A8BCD1;
                 font-size: 11px;
                 font-weight: 700;
                 letter-spacing: 2px;
@@ -423,14 +431,14 @@ class UpdateDialog(QDialog):
         self.changelog_box.setMinimumHeight(200)
         self.changelog_box.setStyleSheet("""
             QTextBrowser {
-                background-color: #0E0C15;
-                color: #C9C8D0;
-                border: 1px solid #1E1B2E;
+                background-color: #07111F;
+                color: #C7D8EA;
+                border: 1px solid #1D3B5B;
                 border-radius: 10px;
                 padding: 16px 18px;
                 font-size: 13px;
                 font-family: 'Segoe UI', sans-serif;
-                selection-background-color: #6C5CE7;
+                selection-background-color: #2583E8;
                 selection-color: #FFFFFF;
             }
             QScrollBar:vertical {
@@ -440,12 +448,12 @@ class UpdateDialog(QDialog):
                 border-radius: 3px;
             }
             QScrollBar::handle:vertical {
-                background: #2A2540;
+                background: #1D3B5B;
                 border-radius: 3px;
                 min-height: 40px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #6C5CE7;
+                background: #2583E8;
             }
             QScrollBar::add-line:vertical,
             QScrollBar::sub-line:vertical,
@@ -476,11 +484,11 @@ class UpdateDialog(QDialog):
         self.progress_bar = GradientProgressBar()
         progress_inner.addWidget(self.progress_bar)
 
-        self.status_label = QLabel("Preparing update...")
+        self.status_label = QLabel(tr("preparing_update"))
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("""
             QLabel {
-                color: #7C7A85;
+                color: #7F9DB8;
                 font-size: 12px;
                 font-weight: 500;
                 background: transparent;
@@ -501,39 +509,39 @@ class UpdateDialog(QDialog):
         btn_layout.setSpacing(12)
 
         if not mandatory:
-            self.skip_btn = QPushButton("Skip")
+            self.skip_btn = QPushButton(tr("skip"))
             self.skip_btn.setFixedHeight(44)
             self.skip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.skip_btn.setStyleSheet("""
                 QPushButton {
                     background: transparent;
-                    color: #6B6878;
+                    color: #7890AD;
                     font-size: 13px;
                     font-weight: 600;
-                    border: 1px solid #2A2540;
+                    border: 1px solid #1D3B5B;
                     border-radius: 10px;
                     padding: 0 28px;
                 }
                 QPushButton:hover {
-                    color: #9CA3AF;
-                    border-color: #3D3756;
-                    background: rgba(30, 27, 46, 0.5);
+                    color: #A8BCD1;
+                    border-color: #2D537A;
+                    background: rgba(16, 38, 64, 0.5);
                 }
                 QPushButton:pressed {
-                    background: #1E1B2E;
-                    color: #C9C8D0;
+                    background: #102640;
+                    color: #C7D8EA;
                 }
             """)
             self.skip_btn.clicked.connect(self.reject)
             btn_layout.addWidget(self.skip_btn)
 
-        self.update_btn = QPushButton("Install Update")
+        self.update_btn = QPushButton(tr("install_update"))
         self.update_btn.setFixedHeight(44)
         self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.update_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #6C5CE7, stop:0.5 #A855F7, stop:1 #EC4899);
+                    stop:0 #1D65D8, stop:0.5 #2583E8, stop:1 #21B8D4);
                 color: #FFFFFF;
                 font-size: 14px;
                 font-weight: 700;
@@ -544,11 +552,11 @@ class UpdateDialog(QDialog):
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #7C6CF7, stop:0.5 #B86AF7, stop:1 #F472B6);
+                    stop:0 #3B82F6, stop:0.5 #4BA3FF, stop:1 #32B9E8);
             }
             QPushButton:pressed {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #5B4BD7, stop:0.5 #9645E7, stop:1 #DB2777);
+                    stop:0 #164EA8, stop:0.5 #1D65D8, stop:1 #168BA7);
             }
         """)
         self.update_btn.clicked.connect(self._on_install)
@@ -559,14 +567,14 @@ class UpdateDialog(QDialog):
 
     def _on_install(self):
         self.update_btn.setEnabled(False)
-        self.update_btn.setText("Installing...")
+        self.update_btn.setText(tr("installing"))
         self.update_btn.setStyleSheet("""
             QPushButton {
-                background: #1E1B2E;
-                color: #4A4458;
+                background: #102640;
+                color: #6688A6;
                 font-size: 14px;
                 font-weight: 700;
-                border: 1px solid #2A2540;
+                border: 1px solid #1D3B5B;
                 border-radius: 10px;
                 padding: 0 36px;
             }
@@ -578,12 +586,27 @@ class UpdateDialog(QDialog):
         self.changelog_box.setVisible(False)
         self.progress_container.setVisible(True)
         self.progress_bar.startIndeterminate()
-        self.status_label.setText("Launching updater...")
+        self.status_label.setText(tr("launching_updater"))
 
         self.setFixedSize(520, 320)
         self.container.setGeometry(0, 0, 520, 320)
 
-        QTimer.singleShot(800, lambda: run_updater(self.download_url))
+        QTimer.singleShot(800, self._start_updater)
+
+    def _start_updater(self):
+        if run_updater(self.download_url):
+            return
+        self.status_label.setText(tr("self_update_source"))
+        self.progress_bar.setValue(0)
+        self.update_btn.setEnabled(True)
+        self.update_btn.setText(tr("install_update"))
+        if hasattr(self, "skip_btn"):
+            self.skip_btn.setVisible(True)
+            self.skip_btn.setEnabled(True)
+        self.changelog_box.setVisible(True)
+        self.progress_container.setVisible(False)
+        self.setFixedSize(520, 580)
+        self.container.setGeometry(0, 0, 520, 580)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -603,236 +626,162 @@ class UpdateDialog(QDialog):
             super().closeEvent(event)
 
 
-def check_updates(parent):
+class _UpdateCheckWorker(QObject):
+    result = pyqtSignal(object)
+
+    def __init__(self, current_version=""):
+        super().__init__()
+        self.current_version = current_version
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            params = {"current_version": self.current_version} if self.current_version else {}
+            response = requests.get(API_URL, params=params, timeout=(5, 15), headers={"User-Agent": "MissionHelper-Launcher"})
+            response.raise_for_status()
+            data = response.json()
+            self.result.emit(data if isinstance(data, dict) else None)
+        except Exception as exc:
+            log_info(f"Launcher update check unavailable: {exc}")
+            self.result.emit(None)
+
+
+class _UpdateResultReceiver(QObject):
+    def __init__(self, parent, callback):
+        super().__init__(parent)
+        self._callback = callback
+
+    @pyqtSlot(object)
+    def handle(self, data):
+        self._callback(data)
+
+
+def _show_update_data(parent, data):
+    if not data:
+        return
     try:
-        if getattr(parent, "update_declined_this_session", False):
-            return
-
         config = configparser.ConfigParser()
-        config.read(INI_FILE)
-        local_version = config.get("Launcher", "version")
-
-        resp = requests.get(API_URL, timeout=5)
-        data = resp.json()
-
-        remote_version = data.get("version")
-        mandatory = data.get("mandatory", False)
-        notes = data.get("notes", {})
-
-        if not remote_version or remote_version == local_version:
+        config.read(INI_FILE, encoding="utf-8")
+        local_version = config.get("Launcher", "version", fallback="0.0.0").strip()
+        remote_version = str(data.get("version", "")).strip()
+        download_url = str(data.get("url", "")).strip()
+        if not remote_version or not download_url or parse_version(remote_version) <= parse_version(local_version):
+            if hasattr(parent, "sidebar"):
+                parent.sidebar.apply_update_info(remote_version or local_version)
             return
-
-        dialog = UpdateDialog(parent, remote_version, local_version, notes, mandatory, data["url"])
+        if hasattr(parent, "sidebar"):
+            parent.sidebar.apply_update_info(remote_version, bool(data.get("mandatory", False)))
+        dialog = UpdateDialog(
+            parent,
+            remote_version,
+            local_version,
+            data.get("notes", {}),
+            bool(data.get("mandatory", False)),
+            download_url,
+        )
         result = dialog.exec()
-
-        if result == QDialog.DialogCode.Rejected and not mandatory:
+        if result == QDialog.DialogCode.Rejected and not bool(data.get("mandatory", False)):
             parent.update_declined_this_session = True
+    except Exception:
+        log_exception("Could not display launcher update information")
 
-    except Exception as e:
-        print("Update check failed:", e)
+
+def check_updates(parent):
+    """Check for launcher updates in the background so startup stays responsive."""
+    if getattr(parent, "update_declined_this_session", False):
+        return False
+    if get_setting("check_updates_on_start", "true").lower() not in {"1", "true", "yes", "on"}:
+        return False
+    existing = getattr(parent, "_update_thread", None)
+    if existing is not None and existing.isRunning():
+        return False
+
+    thread = QThread(parent)
+    config = configparser.ConfigParser()
+    config.read(INI_FILE, encoding="utf-8")
+    local_version = config.get("Launcher", "version", fallback="0.0.0").strip()
+    worker = _UpdateCheckWorker(local_version)
+    receiver = _UpdateResultReceiver(parent, lambda data: _show_update_data(parent, data))
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run)
+    worker.result.connect(receiver.handle)
+    worker.result.connect(thread.quit)
+    worker.result.connect(worker.deleteLater)
+    thread.finished.connect(thread.deleteLater)
+    thread.finished.connect(lambda: setattr(parent, "_update_thread", None))
+    parent._update_thread = thread
+    parent._update_worker = worker
+    parent._update_receiver = receiver
+    thread.start()
+    return False
 
 
 def run_updater(download_url):
-    import tempfile
-    import textwrap
-
-    launcher_pid = os.getpid()
-    target_exe = sys.executable
-
-    updater_code = textwrap.dedent("""
-    import sys, os, shutil, requests, psutil, subprocess
-    from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QProgressBar
-    from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
-
-    class DownloadThread(QThread):
-        progress = pyqtSignal(int)
-        finished = pyqtSignal()
-
-        def __init__(self, url, target_exe):
-            super().__init__()
-            self.url = url
-            self.target_exe = target_exe
-
-        def run(self):
-            resp = requests.get(self.url, stream=True)
-            total = int(resp.headers.get("content-length", 0))
-            tmp_file = self.target_exe + ".new"
-            downloaded = 0
-
-            with open(tmp_file, "wb") as f:
-                for chunk in resp.iter_content(8192):
-                    if not chunk:
-                        continue
-                    f.write(chunk)
-                    downloaded += len(chunk)
-
-                    if total > 0:
-                        percent = int(downloaded * 100 / total)
-                        self.progress.emit(percent)
-
-            old_file = self.target_exe + ".old"
-
-            try:
-                if os.path.exists(old_file):
-                    os.remove(old_file)
-            except:
-                pass
-
-            os.rename(self.target_exe, old_file)
-            os.rename(tmp_file, self.target_exe)
-
-            try:
-                os.remove(old_file)
-            except:
-                pass
-
-            self.finished.emit()
-
-    class UpdaterWindow(QWidget):
-        def __init__(self, download_url, target_exe, target_pid):
-            super().__init__()
-
-            self.download_url = download_url
-            self.target_exe = target_exe
-            self.target_pid = target_pid
-
-            self.setWindowTitle("Mission Helper Updater")
-            self.setFixedSize(500, 160)
-
-            layout = QVBoxLayout(self)
-
-            self.status = QLabel("Preparing update...", self)
-            self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.status.setStyleSheet("font-size: 12pt; color: #EAEAEA;")
-            layout.addWidget(self.status)
-
-            self.progress = QProgressBar(self)
-            self.progress.setRange(0, 100)
-            self.progress.setFixedHeight(30)
-            self.progress.setStyleSheet(\"\"\"
-                QProgressBar {
-                    border: 2px solid #444;
-                    border-radius: 10px;
-                    text-align: center;
-                    font-size: 10pt;
-                }
-
-                QProgressBar::chunk {
-                    background-color: #0078d7;
-                    width: 20px;
-                }
-            \"\"\")
-            layout.addWidget(self.progress)
-
-            QTimer.singleShot(100, self.run_update)
-
-        def run_update(self):
-            if self.is_pid_running(self.target_pid):
-                self.status.setText("Waiting for Mission Helper to close...")
-                QTimer.singleShot(3000, self.run_update)
-            else:
-                self.status.setText("Downloading update...")
-                self.start_download()
-
-        def is_pid_running(self, pid):
-            try:
-                proc = psutil.Process(pid)
-                return proc.is_running()
-            except:
-                return False
-
-        def start_download(self):
-            self.thread = DownloadThread(self.download_url, self.target_exe)
-            self.thread.progress.connect(self.progress.setValue)
-            self.thread.finished.connect(self.restart_app)
-            self.thread.start()
-
-        def restart_app(self):
-            self.status.setText("Restarting Mission Helper...")
-            subprocess.Popen([self.target_exe])
-            QApplication.quit()
-
-    def main():
-        if len(sys.argv) < 4:
-            sys.exit(1)
-
-        app = QApplication(sys.argv)
-
-        win = UpdaterWindow(
-            sys.argv[1],
-            sys.argv[2],
-            int(sys.argv[3])
+    """Hand a packaged launcher update to the next-process updater mode."""
+    if not getattr(sys, "frozen", False):
+        send_warning("Launcher self-update is available only in packaged builds")
+        log_info("Skipped self-update because launcher is running from source")
+        return False
+    target = Path(sys.executable).resolve()
+    try:
+        subprocess.Popen(
+            [str(target), "--apply-update", str(download_url), str(target), str(os.getpid())],
+            cwd=str(target.parent),
+            close_fds=True,
         )
-
-        win.show()
-
-        sys.exit(app.exec())
-
-    if __name__ == "__main__":
-        main()
-    """)
-
-    temp_dir = tempfile.gettempdir()
-    updater_script = os.path.join(temp_dir, "mission_runtime_updater.py")
-
-    with open(updater_script, "w", encoding="utf-8") as f:
-        f.write(updater_code)
-
-    subprocess.Popen([
-        sys.executable,
-        updater_script,
-        download_url,
-        target_exe,
-        str(launcher_pid)
-    ])
-
-    QApplication.quit()
-    sys.exit(0)
+        QApplication.quit()
+        return True
+    except OSError as exc:
+        send_error(f"Could not start launcher updater: {exc}")
+        log_exception("Could not start packaged launcher updater")
+        return False
 
 
-def run_update_check(version, config_file, status_bar):
+def run_update_check(version, config_file=None, status_bar=None):
+    """Update the nested bot safely, keeping the operator's configuration."""
+    if not version:
+        return False
+
+    def status(message):
+        if status_bar is not None:
+            try:
+                status_bar.showMessage(message)
+            except Exception:
+                log_exception("Could not update launcher status bar")
+
     try:
         response = requests.get(
-            "https://api.natemarcellus.com/updates/missionhelper",
+            BOT_UPDATE_API_URL,
             params={"current_version": version},
-            timeout=5
+            timeout=(5, 20),
+            headers={"User-Agent": "MissionHelper-Launcher"},
         )
-        if response.status_code == 200:
-            data = response.json()
-            latest_version = data.get("version")
-            update_url = data.get("url")
-            if latest_version and latest_version != version:
-                send_messages(f"Update available: {latest_version}. Downloading...")
-                status_bar.showMessage(f"Updating to version {latest_version}...")
-                update_response = requests.get(update_url, stream=True)
-                update_response.raise_for_status()
-                with open("update.zip", "wb") as f:
-                    for chunk in update_response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                send_messages("Update downloaded. Applying update...")
-                status_bar.showMessage("Applying update...")
-                temp_extract = os.path.join(os.getcwd(), "temp_update")
-                if os.path.exists(temp_extract):
-                    shutil.rmtree(temp_extract)
-                os.makedirs(temp_extract, exist_ok=True)
-                with zipfile.ZipFile("update.zip", "r") as z:
-                    z.extractall(temp_extract)
-                bot_folder = os.path.join(os.getcwd(), "bot")
-                if os.path.exists(bot_folder):
-                    shutil.rmtree(bot_folder)
-                extracted_items = os.listdir(temp_extract)
-                if extracted_items:
-                    new_folder = os.path.join(temp_extract, extracted_items[0])
-                    shutil.move(new_folder, bot_folder)
-                shutil.rmtree(temp_extract)
-                os.remove("update.zip")
-                if os.path.exists(config_file):
-                    with open(config_file, "r") as f:
-                        old_settings = f.read()
-                    with open(config_file, "w") as f:
-                        f.write(old_settings)
-                send_messages("Update applied successfully.")
-                status_bar.showMessage("Update applied successfully.")
-    except Exception as e:
-        send_messages(f"Update check failed: {e}")
-        status_bar.showMessage("Update check failed")
+        response.raise_for_status()
+        data = response.json()
+        latest_version = str(data.get("version", "")).strip()
+        update_url = str(data.get("url", "")).strip()
+        if not latest_version or parse_version(latest_version) <= parse_version(version):
+            return False
+        if not update_url.lower().startswith(("http://", "https://")):
+            raise RuntimeError("Bot update response did not contain a valid download URL")
+
+        send_system(f"Bot update available: {latest_version}")
+        status(f"Updating bot to {latest_version}...")
+        from utils.install import _cleanup_temp, _deploy_files, _extract_release
+
+        with requests.get(update_url, stream=True, timeout=(10, 90), headers={"User-Agent": "MissionHelper-Launcher"}) as update_response:
+            update_response.raise_for_status()
+            data_bytes = update_response.content
+        source_dir = _extract_release(data_bytes, status_bar)
+        _deploy_files(source_dir, status_bar)
+        _cleanup_temp()
+        send_success(f"Bot updated to {latest_version}")
+        log_info(f"Bot update applied: {version} -> {latest_version}")
+        status(f"Bot updated to {latest_version}")
+        return True
+    except Exception as exc:
+        send_warning(f"Bot update check failed: {exc}")
+        log_exception("Bot update check failed")
+        if status_bar is not None:
+            status("Bot update skipped")
+        return False

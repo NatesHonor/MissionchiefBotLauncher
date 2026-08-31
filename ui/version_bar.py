@@ -2,6 +2,7 @@ import configparser
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QLinearGradient, QBrush, QPen, QFont
 from PyQt6.QtWidgets import QHBoxLayout, QWidget
+from utils.paths import LAUNCHER_CONFIG
 
 
 class VersionLabel(QWidget):
@@ -32,7 +33,7 @@ class VersionLabel(QWidget):
         font.setWeight(QFont.Weight.DemiBold)
         font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.8)
         p.setFont(font)
-        p.setPen(QColor("#3D3756"))
+        p.setPen(QColor("#2D537A"))
         p.drawText(0, 0, self.width(), self.height(), Qt.AlignmentFlag.AlignCenter, self._version)
 
         p.end()
@@ -66,14 +67,14 @@ class HeartbeatDot(QWidget):
 
         from PyQt6.QtGui import QRadialGradient
         glow = QRadialGradient(cx, cy, 8)
-        glow.setColorAt(0.0, QColor(108, 92, 231, int(15 + pulse_factor * 25)))
-        glow.setColorAt(1.0, QColor(108, 92, 231, 0))
+        glow.setColorAt(0.0, QColor(29, 101, 216, int(15 + pulse_factor * 25)))
+        glow.setColorAt(1.0, QColor(29, 101, 216, 0))
         p.setBrush(QBrush(glow))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(cx - 8, cy - 8, 16, 16)
 
         size = 4 + pulse_factor * 1.5
-        p.setBrush(QBrush(QColor(108, 92, 231, int(80 + pulse_factor * 80))))
+        p.setBrush(QBrush(QColor(29, 101, 216, int(80 + pulse_factor * 80))))
         p.drawEllipse(int(cx - size / 2), int(cy - size / 2), int(size), int(size))
 
         p.end()
@@ -102,8 +103,8 @@ class BrandLabel(QWidget):
         p.setFont(font)
 
         gradient = QLinearGradient(0, 0, self.width(), 0)
-        gradient.setColorAt(0.0, QColor("#2A2540"))
-        gradient.setColorAt(1.0, QColor("#1E1B2E"))
+        gradient.setColorAt(0.0, QColor("#1D3B5B"))
+        gradient.setColorAt(1.0, QColor("#102640"))
         p.setPen(QPen(QBrush(gradient), 1))
         p.drawText(0, 0, self.width(), self.height(), Qt.AlignmentFlag.AlignCenter, self._text)
 
@@ -118,7 +119,7 @@ class SeparatorDot(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(QBrush(QColor("#1E1B2E")))
+        p.setBrush(QBrush(QColor("#102640")))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(2, 10, 3, 3)
         p.end()
@@ -131,7 +132,7 @@ class VersionBar(QHBoxLayout):
         self.setSpacing(6)
 
         config = configparser.ConfigParser()
-        config.read("launcher_settings.ini")
+        config.read(LAUNCHER_CONFIG, encoding="utf-8")
         version = config.get("Launcher", "version", fallback="0.0.0")
 
         brand = BrandLabel()

@@ -1,14 +1,33 @@
 import os
 import signal
+import subprocess
 import threading
 from handlers.logging import log_info, log_warning, log_error
 
 _process_cache = {}
 _lock = threading.Lock()
+_stop_event = threading.Event()
+
+
+def clear_stop_request():
+    _stop_event.clear()
+
+
+def request_stop():
+    _stop_event.set()
+
+
+def is_stop_requested():
+    return _stop_event.is_set()
 
 
 def add_process(name, process):
     with _lock:
+        previous = _process_cache.get(name)
+        if previous:
+            previous_process = previous.get("process")
+            if previous_process and previous_process.poll() is None:
+                log_warning(f"Replacing active process entry: {name} (PID: {previous_process.pid})")
         _process_cache[name] = {
             "pid": process.pid,
             "state": "running",
@@ -119,10 +138,23 @@ def stop_process(name, timeout=5):
             log_info(f"Process terminated: {name}")
             return True
         except Exception:
-            log_warning(f"Process did not stop in {timeout}s: {name} (PID: {proc.pid})")
+            log_warning(f"Process did not stop in {timeout}s: {name} (PID: {proc.pid}); terminating its process tree")
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+            else:
+                proc.kill()
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                pass
             with _lock:
-                entry["state"] = "hanging"
-            return False
+                entry["state"] = "stopped" if proc.poll() is not None else "hanging"
+            return proc.poll() is not None
 
     except Exception as e:
         log_error(f"Failed to stop process {name}: {e}")
@@ -135,8 +167,7 @@ def stop_all(timeout=5):
     with _lock:
         names = list(_process_cache.keys())
 
-    for name in names:
-        stop_process(name, timeout)
+    results = {name: stop_process(name, timeout) for name in names}
 
     with _lock:
         finished = []
@@ -146,6 +177,8 @@ def stop_all(timeout=5):
                 if entry["state"] == "running":
                     entry["state"] = f"exited ({proc.returncode})"
                 finished.append(name)
+
+    return all(results.values()) if results else True
 
 
 def force_kill_process(name):
@@ -164,7 +197,12 @@ def force_kill_process(name):
 
     try:
         if os.name == "nt":
-            proc.kill()
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
         else:
             os.kill(proc.pid, signal.SIGKILL)
 

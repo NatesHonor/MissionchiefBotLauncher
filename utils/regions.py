@@ -1,6 +1,9 @@
 import configparser
 
-INI_FILE = "launcher_settings.ini"
+from utils.paths import LAUNCHER_CONFIG
+from utils.settings_store import load, write_atomic
+
+INI_FILE = LAUNCHER_CONFIG
 
 REGIONS = {
     "North America": {
@@ -135,25 +138,23 @@ def get_region_language(region_name=None):
 
 
 def get_selected_region():
-    config = configparser.ConfigParser()
-    config.read(INI_FILE)
-    return config.get("Launcher", "region", fallback="").strip()
+    config = load(INI_FILE)
+    region = config.get("Launcher", "region", fallback="").strip()
+    return region if region in REGIONS else ""
 
 
 def select_region(region_name):
     if region_name not in REGIONS:
         raise ValueError(f"Unknown region: {region_name}")
 
-    config = configparser.ConfigParser()
-    config.read(INI_FILE)
+    config = load(INI_FILE)
 
     if not config.has_section("Launcher"):
         config.add_section("Launcher")
 
     config.set("Launcher", "region", region_name)
 
-    with open(INI_FILE, "w") as f:
-        config.write(f)
+    write_atomic(config, INI_FILE)
 
 
 def is_region_selected():

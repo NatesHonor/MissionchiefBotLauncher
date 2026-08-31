@@ -13,6 +13,10 @@ _signal_bridge = ConsoleSignalBridge()
 
 def set_console_instance(console):
     global _console_instance
+    try:
+        _signal_bridge.message_signal.disconnect(_handle_message)
+    except (TypeError, RuntimeError):
+        pass
     _console_instance = console
     _signal_bridge.message_signal.connect(_handle_message)
 
@@ -22,7 +26,13 @@ def _handle_message(message, level):
         return
 
     if hasattr(_console_instance, 'append_message'):
-        _console_instance.append_message(message, level)
+        QMetaObject.invokeMethod(
+            _console_instance,
+            "append_message",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, message),
+            Q_ARG(str, level),
+        )
     else:
         QMetaObject.invokeMethod(
             _console_instance,
@@ -59,13 +69,11 @@ def _detect_level(message):
 
 
 def insert_message(message, level=None):
-    if _console_instance is None:
-        raise RuntimeError("Console instance not set.")
-
     if level is None:
         level = _detect_level(message)
 
-    _signal_bridge.message_signal.emit(message, level)
+    if _console_instance is not None:
+        _signal_bridge.message_signal.emit(str(message), level)
 
 
 def send_messages(message, level=None):

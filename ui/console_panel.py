@@ -77,6 +77,7 @@ class ConsolePanel(QFrame):
     _failed_signal = pyqtSignal(str)
     _finished_signal = pyqtSignal(int)
     _stopped_signal = pyqtSignal()
+    _log_upload_finished = pyqtSignal(str, bool)
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -103,6 +104,10 @@ class ConsolePanel(QFrame):
         self.clear_btn.setToolTip(tr("clear_console"))
         self.clear_btn.clicked.connect(self._clear_console)
         header.addWidget(self.clear_btn)
+        self.share_log_btn = QPushButton(tr("share_log"))
+        self.share_log_btn.setObjectName("SecondaryButton")
+        self.share_log_btn.clicked.connect(self._share_log)
+        header.addWidget(self.share_log_btn)
         layout.addLayout(header)
 
         self.console = ConsoleOutput()
@@ -123,6 +128,7 @@ class ConsolePanel(QFrame):
         self._failed_signal.connect(self._on_start_failed)
         self._finished_signal.connect(self._on_bot_finished)
         self._stopped_signal.connect(self._on_bot_stopped)
+        self._log_upload_finished.connect(self._on_log_upload_finished)
 
     def _set_button_style(self, running):
         self.control_btn.setObjectName("DangerButton" if running else "PrimaryButton")
@@ -203,6 +209,7 @@ class ConsolePanel(QFrame):
         self.heading.setText(tr("console"))
         self.console.setPlaceholderText(tr("console_placeholder"))
         self.clear_btn.setToolTip(tr("clear_console"))
+        self.share_log_btn.setText(tr("share_log"))
         self._set_clear_icon()
         self.live_label.setText(tr("running" if self.parent.is_running else "idle"))
         self._set_button_style(self.parent.is_running)
@@ -212,6 +219,37 @@ class ConsolePanel(QFrame):
     def _clear_console(self):
         self.console.clear()
         self.console.append_message(tr("console_cleared"), "system")
+
+    def _share_log(self):
+        if getattr(self, "_log_upload_thread", None) and self._log_upload_thread.is_alive():
+            return
+        self.share_log_btn.setEnabled(False)
+        self.status_bar.set_message(tr("uploading_log"), "info")
+        self._log_upload_thread = threading.Thread(
+            target=self._upload_log_worker,
+            name="LauncherLogUploadThread",
+            daemon=True,
+        )
+        self._log_upload_thread.start()
+
+    def _upload_log_worker(self):
+        try:
+            from utils.log_upload import upload_latest_log
+
+            self._log_upload_finished.emit(upload_latest_log(), True)
+        except Exception as exc:
+            self._log_upload_finished.emit(str(exc), False)
+
+    @pyqtSlot(str, bool)
+    def _on_log_upload_finished(self, result, success):
+        self.share_log_btn.setEnabled(True)
+        if not success:
+            self.status_bar.set_message(result, "error")
+            return
+        from PyQt6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(result)
+        self.status_bar.set_message(f"{tr('log_url_copied')}: {result}", "success")
 
     def _set_clear_icon(self):
         theme = THEMES[current_theme_name(get_setting("theme", "ocean"))]

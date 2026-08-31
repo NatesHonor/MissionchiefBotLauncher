@@ -3,11 +3,12 @@ from handlers.logging import log_info, log_warning, log_error, log_exception
 from utils import state
 
 
-def stop_bot():
+def stop_bot(on_complete=None):
     send_system("Initiating shutdown sequence...")
     log_info("Bot stop requested")
 
     try:
+        state.request_stop()
         active = state.get_active_processes() if hasattr(state, 'get_active_processes') else {}
         count = len(active) if isinstance(active, dict) else 0
 
@@ -44,3 +45,9 @@ def stop_bot():
             state.stop_all()
         except Exception:
             pass
+    finally:
+        if on_complete:
+            try:
+                on_complete()
+            except Exception:
+                log_exception("Shutdown completion callback failed")

@@ -1,375 +1,241 @@
-import os
-import sys
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import (
-    QColor, QPainter, QPainterPath, QLinearGradient, QBrush,
-    QPen, QFont, QRadialGradient, QSyntaxHighlighter, QTextCharFormat
-)
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
-    QFrame, QGraphicsDropShadowEffect, QLabel
-)
+from pathlib import Path
 
-from widgets.action_button import ActionButton
+from PyQt6.QtCore import QSignalBlocker, Qt
+from PyQt6.QtGui import QPixmap
+from PyQt6.QtWidgets import QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea, QTextEdit, QVBoxLayout, QWidget
+
+from handlers.logging import log_exception
 from utils.integrity import run_integrity_check
+from utils.localization import LANGUAGES, language_setting, set_language, tr
+from utils.paths import BOT_FOLDER
+from utils.profile import avatar_path, clear_avatar, load_profile, set_avatar, update_profile
+from utils.settings_store import get as get_setting, set_values, write_text_atomic
+from ui.icons import pixmap
+from ui.theme import THEMES, current_theme_name, theme_label, theme_names
 
 
-class IniHighlighter(QSyntaxHighlighter):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-        self._section_fmt = QTextCharFormat()
-        self._section_fmt.setForeground(QColor("#A855F7"))
-        self._section_fmt.setFontWeight(QFont.Weight.Bold)
-
-        self._key_fmt = QTextCharFormat()
-        self._key_fmt.setForeground(QColor("#EC4899"))
-
-        self._value_fmt = QTextCharFormat()
-        self._value_fmt.setForeground(QColor("#C9C8D0"))
-
-        self._equals_fmt = QTextCharFormat()
-        self._equals_fmt.setForeground(QColor("#4A4458"))
-
-        self._comment_fmt = QTextCharFormat()
-        self._comment_fmt.setForeground(QColor("#3D3756"))
-        self._comment_fmt.setFontItalic(True)
-
-    def highlightBlock(self, text):
-        stripped = text.strip()
-
-        if stripped.startswith("[") and "]" in stripped:
-            self.setFormat(0, len(text), self._section_fmt)
-
-        elif stripped.startswith("#") or stripped.startswith(";"):
-            self.setFormat(0, len(text), self._comment_fmt)
-
-        elif "=" in text:
-            idx = text.index("=")
-            self.setFormat(0, idx, self._key_fmt)
-            self.setFormat(idx, 1, self._equals_fmt)
-            self.setFormat(idx + 1, len(text) - idx - 1, self._value_fmt)
-
-
-class SettingsSectionHeader(QWidget):
-    def __init__(self, title, description="", icon_type="settings", accent="#A855F7", parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(64)
-        self._title = title
-        self._description = description
-        self._icon_type = icon_type
-        self._accent = QColor(accent)
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        icon_x, icon_y = 0, 8
-        icon_size = 48
-
-        bg_gradient = QLinearGradient(icon_x, icon_y, icon_x + icon_size, icon_y + icon_size)
-        bg_gradient.setColorAt(0.0, QColor(self._accent.red(), self._accent.green(), self._accent.blue(), 25))
-        bg_gradient.setColorAt(1.0, QColor(self._accent.red(), self._accent.green(), self._accent.blue(), 10))
-        p.setBrush(QBrush(bg_gradient))
-        p.setPen(QPen(QColor(self._accent.red(), self._accent.green(), self._accent.blue(), 40), 1))
-        icon_path = QPainterPath()
-        icon_path.addRoundedRect(icon_x, icon_y, icon_size, icon_size, 14, 14)
-        p.drawPath(icon_path)
-
-        cx = icon_x + icon_size / 2
-        cy = icon_y + icon_size / 2
-        p.setPen(QPen(self._accent, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-
-        if self._icon_type == "settings":
-            import math
-            p.drawEllipse(int(cx - 4), int(cy - 4), 8, 8)
-            for a in range(0, 360, 45):
-                rad = math.radians(a)
-                x1 = cx + 6 * math.cos(rad)
-                y1 = cy + 6 * math.sin(rad)
-                x2 = cx + 9 * math.cos(rad)
-                y2 = cy + 9 * math.sin(rad)
-                p.drawLine(int(x1), int(y1), int(x2), int(y2))
-
-        elif self._icon_type == "file":
-            p.drawRoundedRect(int(cx - 7), int(cy - 9), 14, 18, 2, 2)
-            p.drawLine(int(cx - 4), int(cy - 3), int(cx + 4), int(cy - 3))
-            p.drawLine(int(cx - 4), int(cy + 1), int(cx + 4), int(cy + 1))
-            p.drawLine(int(cx - 4), int(cy + 5), int(cx + 2), int(cy + 5))
-
-        elif self._icon_type == "repair":
-            p.drawLine(int(cx - 6), int(cy + 6), int(cx + 2), int(cy - 2))
-            p.drawEllipse(int(cx + 0), int(cy - 6), 8, 8)
-
-        text_x = icon_x + icon_size + 16
-
-        title_font = QFont("Segoe UI", 15)
-        title_font.setWeight(QFont.Weight.Bold)
-        p.setFont(title_font)
-        p.setPen(QColor("#F1F0F5"))
-        p.drawText(text_x, 8, self.width() - text_x, 26, Qt.AlignmentFlag.AlignVCenter, self._title)
-
-        if self._description:
-            desc_font = QFont("Segoe UI", 11)
-            desc_font.setWeight(QFont.Weight.Normal)
-            p.setFont(desc_font)
-            p.setPen(QColor("#4A4458"))
-            p.drawText(text_x, 34, self.width() - text_x, 22, Qt.AlignmentFlag.AlignVCenter, self._description)
-
-        p.end()
-
-
-class SaveNotification(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(40)
-        self.setVisible(False)
-        self._opacity = 0.0
-        self._message = ""
-        self._level = "success"
-        self._timer = QTimer(self)
-        self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self._fade_out)
-        self._fade_timer = QTimer(self)
-        self._fade_timer.timeout.connect(self._animate_fade)
-        self._fading_in = False
-        self._fading_out = False
-
-    def show_message(self, text, level="success", duration=3000):
-        self._message = text
-        self._level = level
-        self._opacity = 0.0
-        self._fading_in = True
-        self._fading_out = False
-        self.setVisible(True)
-        self._fade_timer.start(16)
-        self._timer.start(duration)
-
-    def _fade_out(self):
-        self._fading_in = False
-        self._fading_out = True
-        self._fade_timer.start(16)
-
-    def _animate_fade(self):
-        if self._fading_in:
-            self._opacity = min(1.0, self._opacity + 0.08)
-            if self._opacity >= 1.0:
-                self._fading_in = False
-                self._fade_timer.stop()
-        elif self._fading_out:
-            self._opacity = max(0.0, self._opacity - 0.06)
-            if self._opacity <= 0.0:
-                self._fading_out = False
-                self._fade_timer.stop()
-                self.setVisible(False)
-        self.update()
-
-    def paintEvent(self, event):
-        if self._opacity <= 0:
-            return
-
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setOpacity(self._opacity)
-
-        colors = {
-            "success": ("#22C55E", "✓"),
-            "error": ("#EF4444", "✗"),
-            "warning": ("#F59E0B", "⚠"),
-            "info": ("#6C5CE7", "◆"),
-        }
-        color_hex, icon = colors.get(self._level, colors["info"])
-        color = QColor(color_hex)
-
-        bg = QPainterPath()
-        bg.addRoundedRect(0, 0, self.width(), self.height(), 10, 10)
-        p.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 15)))
-        p.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 50), 1))
-        p.drawPath(bg)
-
-        p.setBrush(QBrush(color))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(14, 12, 6, 6)
-
-        font = QFont("Segoe UI", 12)
-        font.setWeight(QFont.Weight.DemiBold)
-        p.setFont(font)
-        p.setPen(color)
-        p.drawText(28, 0, self.width() - 40, self.height(), Qt.AlignmentFlag.AlignVCenter, f"{icon}  {self._message}")
-
-        p.end()
-
-
-class ConfigEditor(QTextEdit):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet("""
-            QTextEdit {
-                background-color: #08070D;
-                color: #C9C8D0;
-                border: 1px solid #1A1726;
-                border-radius: 10px;
-                padding: 14px 16px;
-                font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-                font-size: 13px;
-                line-height: 1.6;
-                selection-background-color: #6C5CE7;
-                selection-color: #FFFFFF;
-            }
-            QScrollBar:vertical {
-                background: transparent;
-                width: 6px;
-                margin: 4px 2px;
-                border-radius: 3px;
-            }
-            QScrollBar::handle:vertical {
-                background: #2A2540;
-                border-radius: 3px;
-                min-height: 40px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #6C5CE7;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical,
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: transparent;
-                height: 0;
-                border: none;
-            }
-        """)
-        self._highlighter = IniHighlighter(self.document())
-
-
-class LineCountLabel(QWidget):
-    def __init__(self, editor, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(24)
-        self._editor = editor
-        self._editor.textChanged.connect(self.update)
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        line_count = self._editor.document().blockCount()
-        char_count = len(self._editor.toPlainText())
-
-        font = QFont("Segoe UI", 10)
-        font.setWeight(QFont.Weight.Medium)
-        p.setFont(font)
-        p.setPen(QColor("#3D3756"))
-
-        text = f"{line_count} lines  •  {char_count} chars"
-        p.drawText(0, 0, self.width(), self.height(), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, text)
-
-        p.end()
-
-
-class ProfileHandler(QWidget):
+class ProfileHandler(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
-        self.setStyleSheet("background: transparent; border: none;")
+        self.config_path = BOT_FOLDER / "config.ini"
+        self.setObjectName("SettingsScroll")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._build_ui()
+        self.refresh()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        content = QWidget()
+        content.setObjectName("SettingsPage")
+        outer = QVBoxLayout(content)
+        outer.setContentsMargins(26, 24, 26, 24)
+        outer.setSpacing(16)
 
-        header = SettingsSectionHeader(
-            "Configuration",
-            "Edit config.ini for bot settings",
-            "file",
-            "#A855F7"
-        )
-        layout.addWidget(header)
-        layout.addSpacing(16)
+        header = QVBoxLayout()
+        self.page_title = QLabel(tr("settings"))
+        self.page_title.setObjectName("PageTitle")
+        self.page_copy = QLabel(tr("settings_copy"))
+        self.page_copy.setObjectName("Hint")
+        header.addWidget(self.page_title)
+        header.addWidget(self.page_copy)
+        outer.addLayout(header)
 
-        editor_card = QFrame()
-        editor_card.setStyleSheet("""
-            QFrame {
-                background-color: #0E0C15;
-                border: 1px solid #1A1726;
-                border-radius: 12px;
-            }
-        """)
-        shadow = QGraphicsDropShadowEffect(editor_card)
-        shadow.setBlurRadius(24)
-        shadow.setColor(QColor(0, 0, 0, 50))
-        shadow.setOffset(0, 4)
-        editor_card.setGraphicsEffect(shadow)
+        profile_card = QFrame()
+        profile_card.setObjectName("ProfileCard")
+        profile_layout = QVBoxLayout(profile_card)
+        profile_layout.setContentsMargins(18, 16, 18, 18)
+        profile_heading = QLabel(tr("profile"))
+        profile_heading.setObjectName("CardTitle")
+        profile_layout.addWidget(profile_heading)
+        self.profile_hint = QLabel(tr("profile_hint"))
+        self.profile_hint.setObjectName("Hint")
+        profile_layout.addWidget(self.profile_hint)
 
-        card_layout = QVBoxLayout(editor_card)
-        card_layout.setContentsMargins(2, 2, 2, 8)
-        card_layout.setSpacing(4)
+        profile_grid = QGridLayout()
+        profile_grid.setHorizontalSpacing(14)
+        profile_grid.setVerticalSpacing(9)
+        self.avatar_label = QLabel()
+        self.avatar_label.setObjectName("SettingsAvatar")
+        self.avatar_label.setFixedSize(72, 72)
+        self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        profile_grid.addWidget(self.avatar_label, 0, 0, 3, 1)
+        self.name_label = QLabel(tr("display_name"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setMaxLength(64)
+        self.role_label = QLabel(tr("role"))
+        self.role_edit = QLineEdit()
+        self.role_edit.setMaxLength(64)
+        profile_grid.addWidget(self.name_label, 0, 1)
+        profile_grid.addWidget(self.name_edit, 0, 2)
+        profile_grid.addWidget(self.role_label, 1, 1)
+        profile_grid.addWidget(self.role_edit, 1, 2)
+        avatar_buttons = QHBoxLayout()
+        self.avatar_btn = QPushButton(tr("choose_avatar"))
+        self.avatar_btn.setObjectName("SecondaryButton")
+        self.avatar_btn.clicked.connect(self.choose_avatar)
+        self.remove_avatar_btn = QPushButton(tr("remove_avatar"))
+        self.remove_avatar_btn.setObjectName("SecondaryButton")
+        self.remove_avatar_btn.clicked.connect(self.remove_avatar)
+        avatar_buttons.addWidget(self.avatar_btn)
+        avatar_buttons.addWidget(self.remove_avatar_btn)
+        profile_grid.addLayout(avatar_buttons, 2, 1, 1, 2)
+        profile_layout.addLayout(profile_grid)
+        self.save_profile_btn = QPushButton(tr("save_profile"))
+        self.save_profile_btn.setObjectName("PrimaryButton")
+        self.save_profile_btn.clicked.connect(self.save_profile)
+        profile_layout.addWidget(self.save_profile_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        outer.addWidget(profile_card)
 
-        self.text_edit = ConfigEditor()
+        appearance_card = QFrame()
+        appearance_card.setObjectName("SettingsCard")
+        appearance_layout = QGridLayout(appearance_card)
+        appearance_layout.setContentsMargins(18, 16, 18, 18)
+        self.appearance_title = QLabel(tr("appearance"))
+        self.appearance_title.setObjectName("CardTitle")
+        appearance_layout.addWidget(self.appearance_title, 0, 0, 1, 2)
+        self.theme_label = QLabel(tr("theme"))
+        self.theme_combo = QComboBox()
+        for name in theme_names():
+            self.theme_combo.addItem(theme_label(name), name)
+        self.language_label = QLabel(tr("language"))
+        self.language_combo = QComboBox()
+        for code, label in LANGUAGES.items():
+            self.language_combo.addItem(label, code)
+        self.theme_combo.currentIndexChanged.connect(self.preview_theme)
+        self.language_combo.currentIndexChanged.connect(self.preview_language)
+        appearance_layout.addWidget(self.theme_label, 1, 0)
+        appearance_layout.addWidget(self.theme_combo, 1, 1)
+        appearance_layout.addWidget(self.language_label, 2, 0)
+        appearance_layout.addWidget(self.language_combo, 2, 1)
+        outer.addWidget(appearance_card)
 
-        base_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.abspath(".")
-        self.config_path = os.path.join(base_dir, "bot", "config.ini")
-
-        if os.path.exists(self.config_path):
-            with open(self.config_path, "r") as f:
-                self.text_edit.setText(f.read())
-        else:
-            self.text_edit.setReadOnly(True)
-            self.text_edit.setText("# Config.ini not available until setup is complete.")
-
-        card_layout.addWidget(self.text_edit, 1)
-
-        self.line_counter = LineCountLabel(self.text_edit)
-        counter_layout = QHBoxLayout()
-        counter_layout.setContentsMargins(8, 0, 12, 0)
-        counter_layout.addStretch()
-        counter_layout.addWidget(self.line_counter)
-        card_layout.addLayout(counter_layout)
-
-        layout.addWidget(editor_card, 1)
-        layout.addSpacing(12)
-
-        self.notification = SaveNotification()
-        layout.addWidget(self.notification)
-        layout.addSpacing(8)
-
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(10)
-
-        self.save_btn = ActionButton("Save Config", style="primary", icon_type="save")
-        self.save_btn.clicked.connect(self.save_config)
-        btn_layout.addWidget(self.save_btn, 1)
-
-        self.repair_btn = ActionButton("Repair", style="danger", icon_type="refresh")
+        config_card = QFrame()
+        config_card.setObjectName("SettingsCard")
+        config_layout = QVBoxLayout(config_card)
+        config_layout.setContentsMargins(18, 16, 18, 18)
+        self.config_title = QLabel(tr("bot_configuration"))
+        self.config_title.setObjectName("CardTitle")
+        self.config_hint = QLabel(tr("edit_config"))
+        self.config_hint.setObjectName("Hint")
+        config_layout.addWidget(self.config_title)
+        config_layout.addWidget(self.config_hint)
+        self.config_editor = QTextEdit()
+        self.config_editor.setMinimumHeight(180)
+        config_layout.addWidget(self.config_editor, 1)
+        config_buttons = QHBoxLayout()
+        self.repair_btn = QPushButton(tr("repair"))
+        self.repair_btn.setObjectName("SecondaryButton")
         self.repair_btn.clicked.connect(self._run_repair)
-        btn_layout.addWidget(self.repair_btn, 1)
+        self.save_config_btn = QPushButton(tr("save_config"))
+        self.save_config_btn.setObjectName("PrimaryButton")
+        self.save_config_btn.clicked.connect(self.save_config)
+        config_buttons.addWidget(self.repair_btn)
+        config_buttons.addStretch()
+        config_buttons.addWidget(self.save_config_btn)
+        config_layout.addLayout(config_buttons)
+        outer.addWidget(config_card, 1)
+        self.setWidget(content)
 
-        layout.addLayout(btn_layout)
+    def refresh(self):
+        profile = load_profile()
+        self.name_edit.setText(profile["display_name"])
+        self.role_edit.setText(profile["role"])
+        self._refresh_avatar(profile)
+        self._select_data(self.theme_combo, get_setting("theme", "ocean"))
+        self._select_data(self.language_combo, language_setting())
+        self._load_config()
 
-    def save_config(self):
-        if not os.path.exists(self.config_path):
-            self.notification.show_message("Config.ini is missing — run repair first", "error")
+    @staticmethod
+    def _select_data(combo, value):
+        index = combo.findData(value)
+        if index >= 0:
+            blocker = QSignalBlocker(combo)
+            combo.setCurrentIndex(index)
+            del blocker
+
+    def _refresh_avatar(self, profile=None):
+        path = avatar_path(profile or load_profile())
+        if path:
+            avatar_pixmap = QPixmap(str(path)).scaled(72, 72, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            self.avatar_label.setPixmap(avatar_pixmap)
+            self.avatar_label.setText("")
+        else:
+            theme = THEMES[current_theme_name(get_setting("theme", "ocean"))]
+            self.avatar_label.setPixmap(pixmap("user", 42, theme.cyan))
+            self.avatar_label.setText("")
+
+    def _load_config(self):
+        if self.config_path.is_file():
+            self.config_editor.setPlainText(self.config_path.read_text(encoding="utf-8"))
+            self.config_editor.setReadOnly(False)
+        else:
+            self.config_editor.setPlainText("# Config.ini is not available until setup is complete.")
+            self.config_editor.setReadOnly(True)
+
+    def choose_avatar(self):
+        filename, _ = QFileDialog.getOpenFileName(self, tr("choose_avatar"), "", "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)")
+        if not filename:
             return
         try:
-            with open(self.config_path, "w") as f:
-                f.write(self.text_edit.toPlainText())
-            self.notification.show_message("Configuration saved successfully", "success")
-            if self.parent and hasattr(self.parent, "status_bar"):
-                self.parent.status_bar.showMessage("Settings saved")
-        except Exception as e:
-            self.notification.show_message(f"Save failed: {e}", "error")
+            profile = set_avatar(filename)
+            self._refresh_avatar(profile)
+            self.parent.sidebar.user_card.refresh()
+        except Exception as exc:
+            self.parent.console_panel.status_bar.set_message(str(exc), "error")
+
+    def remove_avatar(self):
+        profile = clear_avatar()
+        self._refresh_avatar(profile)
+        self.parent.sidebar.user_card.refresh()
+
+    def save_profile(self):
+        profile = update_profile(self.name_edit.text(), self.role_edit.text())
+        self._refresh_avatar(profile)
+        self.parent.sidebar.user_card.refresh()
+        self.parent.console_panel.status_bar.set_message(tr("profile_saved"), "success")
+
+    def preview_theme(self):
+        if self.parent and self.theme_combo.currentData():
+            self.parent.apply_preferences(self.theme_combo.currentData(), None, persist=True)
+
+    def preview_language(self):
+        if self.parent and self.language_combo.currentData():
+            self.parent.apply_preferences(None, self.language_combo.currentData(), persist=True)
+
+    def refresh_text(self):
+        self.page_title.setText(tr("settings"))
+        self.page_copy.setText(tr("settings_copy"))
+        self.profile_hint.setText(tr("profile_hint"))
+        self.name_label.setText(tr("display_name"))
+        self.role_label.setText(tr("role"))
+        self.avatar_btn.setText(tr("choose_avatar"))
+        self.remove_avatar_btn.setText(tr("remove_avatar"))
+        self.save_profile_btn.setText(tr("save_profile"))
+        self.appearance_title.setText(tr("appearance"))
+        self.theme_label.setText(tr("theme"))
+        self.language_label.setText(tr("language"))
+        self.config_title.setText(tr("bot_configuration"))
+        self.config_hint.setText(tr("edit_config"))
+        self.repair_btn.setText(tr("repair"))
+        self.save_config_btn.setText(tr("save_config"))
+
+    def save_config(self):
+        if not self.config_path.is_file():
+            self.parent.console_panel.status_bar.set_message(tr("config_missing"), "error")
+            return
+        try:
+            write_text_atomic(self.config_editor.toPlainText(), self.config_path)
+            self.parent.console_panel.status_bar.set_message(tr("config_saved"), "success")
+        except Exception as exc:
+            self.parent.console_panel.status_bar.set_message(f"Save failed: {exc}", "error")
 
     def _run_repair(self):
-        self.notification.show_message("Running integrity check...", "info")
         try:
             run_integrity_check()
-            self.notification.show_message("Repair completed successfully", "success")
-            if os.path.exists(self.config_path):
-                with open(self.config_path, "r") as f:
-                    self.text_edit.setText(f.read())
-                self.text_edit.setReadOnly(False)
-        except Exception as e:
-            self.notification.show_message(f"Repair failed: {e}", "error")
+            self._load_config()
+            self.parent.console_panel.status_bar.set_message(tr("repair_complete") if self.config_path.exists() else tr("repair_missing"), "success" if self.config_path.exists() else "error")
+        except Exception as exc:
+            log_exception("Settings repair failed")
+            self.parent.console_panel.status_bar.set_message(f"Repair failed: {exc}", "error")

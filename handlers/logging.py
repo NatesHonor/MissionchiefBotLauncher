@@ -1,13 +1,17 @@
 import os
 import sys
+import tempfile
 import traceback
 from datetime import datetime
+from pathlib import Path
+
+from utils.paths import LOG_FOLDER
 
 _log_file_path = None
 _session_start = None
 _log_count = 0
 
-LOG_DIR = "logs"
+LOG_DIR = str(LOG_FOLDER)
 LOG_PREFIX = "MissionchiefBot"
 MAX_LOG_FILES_PER_DAY = 50
 MAX_LOG_DAYS = 30
@@ -20,8 +24,7 @@ def generate_log_file():
     _log_count = 0
 
     today = _session_start.strftime("%Y-%m-%d")
-    date_dir = os.path.join(LOG_DIR, today)
-    os.makedirs(date_dir, exist_ok=True)
+    date_dir = _get_log_directory(today)
 
     counter = 1
     while counter <= MAX_LOG_FILES_PER_DAY:
@@ -30,7 +33,7 @@ def generate_log_file():
             break
         counter += 1
 
-    _log_file_path = os.path.join(date_dir, f"{LOG_PREFIX}_{counter}.log")
+    _log_file_path = os.path.join(str(date_dir), f"{LOG_PREFIX}_{counter}.log")
 
     header = [
         f"{'=' * 60}",
@@ -43,12 +46,30 @@ def generate_log_file():
         "",
     ]
 
-    with open(_log_file_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(header) + "\n")
+    try:
+        with open(_log_file_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(header) + "\n")
+    except (IOError, OSError):
+        fallback = Path(tempfile.gettempdir()) / "Mission Helper" / "logs" / today
+        fallback.mkdir(parents=True, exist_ok=True)
+        _log_file_path = str(fallback / f"{LOG_PREFIX}_{counter}.log")
+        with open(_log_file_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(header) + "\n")
 
     _cleanup_old_logs()
 
     return _log_file_path
+
+
+def _get_log_directory(today):
+    preferred = Path(LOG_DIR) / today
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        return preferred
+    except (IOError, OSError):
+        fallback = Path(tempfile.gettempdir()) / "Mission Helper" / "logs" / today
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
 
 
 def log_to_latest_file(message, level=None):

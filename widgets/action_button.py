@@ -10,10 +10,10 @@ class ActionButton(QPushButton):
 
     STYLES = {
         "primary": {
-            "gradient": [("#6C5CE7", 0.0), ("#A855F7", 0.5), ("#EC4899", 1.0)],
-            "hover":    [("#7C6CF7", 0.0), ("#B86AF7", 0.5), ("#F472B6", 1.0)],
-            "pressed":  [("#4338CA", 0.0), ("#7E22CE", 0.5), ("#BE185D", 1.0)],
-            "glow": "#A855F7",
+            "gradient": [("#1D65D8", 0.0), ("#2583E8", 0.5), ("#21B8D4", 1.0)],
+            "hover":    [("#3B82F6", 0.0), ("#4BA3FF", 0.5), ("#32B9E8", 1.0)],
+            "pressed":  [("#164EA8", 0.0), ("#1D65D8", 0.5), ("#168BA7", 1.0)],
+            "glow": "#2583E8",
         },
         "success": {
             "gradient": [("#059669", 0.0), ("#10B981", 0.5), ("#34D399", 1.0)],
@@ -28,23 +28,23 @@ class ActionButton(QPushButton):
             "glow": "#EF4444",
         },
         "secondary": {
-            "gradient": [("#1E1B2E", 0.0), ("#1E1B2E", 1.0)],
-            "hover":    [("#2A2540", 0.0), ("#2A2540", 1.0)],
-            "pressed":  [("#13111C", 0.0), ("#13111C", 1.0)],
-            "glow": "#6C5CE7",
-            "border": "#2A2540",
-            "border_hover": "#3D3756",
-            "text": "#C9C8D0",
+            "gradient": [("#102640", 0.0), ("#102640", 1.0)],
+            "hover":    [("#1D3B5B", 0.0), ("#1D3B5B", 1.0)],
+            "pressed":  [("#0B1B2D", 0.0), ("#0B1B2D", 1.0)],
+            "glow": "#2583E8",
+            "border": "#1D3B5B",
+            "border_hover": "#2D537A",
+            "text": "#C7D8EA",
         },
         "ghost": {
             "gradient": [("#00000000", 0.0), ("#00000000", 1.0)],
             "hover":    [("#1A1726", 0.0), ("#1A1726", 1.0)],
-            "pressed":  [("#13111C", 0.0), ("#13111C", 1.0)],
+            "pressed":  [("#0B1B2D", 0.0), ("#0B1B2D", 1.0)],
             "glow": None,
-            "border": "#2A2540",
-            "border_hover": "#3D3756",
-            "text": "#7C7A85",
-            "text_hover": "#C9C8D0",
+            "border": "#1D3B5B",
+            "border_hover": "#2D537A",
+            "text": "#7F9DB8",
+            "text_hover": "#C7D8EA",
         },
     }
 

@@ -15,16 +15,16 @@ class GlassFrame(QFrame):
 
         main_bg = QPainterPath()
         main_bg.addRoundedRect(0, 0, self.width(), self.height(), 16, 16)
-        p.setBrush(QBrush(QColor("#0E0C15")))
+        p.setBrush(QBrush(QColor("#07111F")))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawPath(main_bg)
 
         border_gradient = QLinearGradient(0, 0, self.width(), self.height())
-        border_gradient.setColorAt(0.0, QColor(108, 92, 231, 40))
-        border_gradient.setColorAt(0.25, QColor(42, 37, 64, 60))
-        border_gradient.setColorAt(0.5, QColor(168, 85, 247, 30))
-        border_gradient.setColorAt(0.75, QColor(42, 37, 64, 60))
-        border_gradient.setColorAt(1.0, QColor(236, 72, 153, 35))
+        border_gradient.setColorAt(0.0, QColor(29, 101, 216, 40))
+        border_gradient.setColorAt(0.25, QColor(29, 59, 91, 60))
+        border_gradient.setColorAt(0.5, QColor(37, 131, 232, 30))
+        border_gradient.setColorAt(0.75, QColor(29, 59, 91, 60))
+        border_gradient.setColorAt(1.0, QColor(33, 184, 212, 35))
 
         border_path = QPainterPath()
         border_path.addRoundedRect(0, 0, self.width(), self.height(), 16, 16)
@@ -37,9 +37,9 @@ class GlassFrame(QFrame):
         p.drawPath(border_only)
 
         glow_tl = QRadialGradient(self.width() * 0.1, self.height() * 0.05, self.width() * 0.4)
-        glow_tl.setColorAt(0.0, QColor(108, 92, 231, 6))
-        glow_tl.setColorAt(0.5, QColor(108, 92, 231, 2))
-        glow_tl.setColorAt(1.0, QColor(108, 92, 231, 0))
+        glow_tl.setColorAt(0.0, QColor(29, 101, 216, 6))
+        glow_tl.setColorAt(0.5, QColor(29, 101, 216, 2))
+        glow_tl.setColorAt(1.0, QColor(29, 101, 216, 0))
         p.setBrush(QBrush(glow_tl))
         p.setPen(Qt.PenStyle.NoPen)
         p.setClipPath(main_bg)
@@ -51,9 +51,9 @@ class GlassFrame(QFrame):
         )
 
         glow_br = QRadialGradient(self.width() * 0.9, self.height() * 0.9, self.width() * 0.35)
-        glow_br.setColorAt(0.0, QColor(236, 72, 153, 4))
-        glow_br.setColorAt(0.5, QColor(236, 72, 153, 1))
-        glow_br.setColorAt(1.0, QColor(236, 72, 153, 0))
+        glow_br.setColorAt(0.0, QColor(33, 184, 212, 4))
+        glow_br.setColorAt(0.5, QColor(33, 184, 212, 1))
+        glow_br.setColorAt(1.0, QColor(33, 184, 212, 0))
         p.setBrush(QBrush(glow_br))
         p.drawEllipse(
             int(self.width() * 0.9 - self.width() * 0.35),

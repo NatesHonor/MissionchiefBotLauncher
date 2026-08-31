@@ -1,10 +1,12 @@
 import sys
 from PyQt6.QtWidgets import QApplication
 from windows.app import MissionChiefBotApp
+from ui.theme import current_theme_name, stylesheet
+from utils.settings_store import get as get_setting
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyleSheet("QWidget { background-color: #101010; }")
+    app.setStyleSheet(stylesheet(current_theme_name(get_setting("theme", "ocean"))))
 
     window = MissionChiefBotApp()
     window.show()

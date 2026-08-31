@@ -1,241 +1,90 @@
-import os
-import sys
-from PyQt6.QtCore import Qt, QPoint, QSize, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import (
-    QFont, QPixmap, QIcon, QColor, QPainter, QPainterPath,
-    QLinearGradient, QBrush, QPen, QRadialGradient
-)
-from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QLabel, QPushButton,
-    QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QSizePolicy
-)
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
+
+from utils.localization import tr
+from utils.settings_store import get as get_setting
+from ui.icons import icon, icon_size
+from ui.theme import THEMES, current_theme_name
 
 
-def resource_path(relative_path):
-    base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
-    return os.path.join(base_path, relative_path)
-
-
-class WindowButton(QPushButton):
-    def __init__(self, icon_type="close", parent=None):
-        super().__init__(parent)
-        self.setFixedSize(32, 32)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._icon_type = icon_type
-        self._hovered = False
-        self._pressed = False
-
-        self._colors = {
-            "close": {
-                "icon": "#6B6878",
-                "icon_hover": "#FFFFFF",
-                "bg_hover": "#EF4444",
-                "bg_pressed": "#DC2626",
-            },
-            "minimize": {
-                "icon": "#6B6878",
-                "icon_hover": "#FFFFFF",
-                "bg_hover": "#2A2540",
-                "bg_pressed": "#1E1B2E",
-            },
-            "maximize": {
-                "icon": "#6B6878",
-                "icon_hover": "#FFFFFF",
-                "bg_hover": "#2A2540",
-                "bg_pressed": "#1E1B2E",
-            },
-        }
-
-    def enterEvent(self, event):
-        self._hovered = True
-        self.update()
-
-    def leaveEvent(self, event):
-        self._hovered = False
-        self._pressed = False
-        self.update()
-
-    def mousePressEvent(self, event):
-        self._pressed = True
-        self.update()
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._pressed = False
-        self.update()
-        super().mouseReleaseEvent(event)
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        colors = self._colors.get(self._icon_type, self._colors["minimize"])
-
-        bg = QPainterPath()
-        bg.addRoundedRect(0, 0, self.width(), self.height(), 8, 8)
-
-        if self._pressed:
-            p.setBrush(QBrush(QColor(colors["bg_pressed"])))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawPath(bg)
-        elif self._hovered:
-            p.setBrush(QBrush(QColor(colors["bg_hover"])))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawPath(bg)
-
-        icon_color = QColor(colors["icon_hover"] if self._hovered else colors["icon"])
-        p.setPen(QPen(icon_color, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-
-        cx, cy = self.width() / 2, self.height() / 2
-
-        if self._icon_type == "close":
-            s = 4.5
-            p.drawLine(int(cx - s), int(cy - s), int(cx + s), int(cy + s))
-            p.drawLine(int(cx + s), int(cy - s), int(cx - s), int(cy + s))
-
-        elif self._icon_type == "minimize":
-            p.drawLine(int(cx - 5), int(cy), int(cx + 5), int(cy))
-
-        elif self._icon_type == "maximize":
-            p.drawRoundedRect(int(cx - 5), int(cy - 5), 10, 10, 2, 2)
-
-        p.end()
-
-
-class AppLogo(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(36, 36)
-        self._pixmap = None
-
-        logo_path = resource_path("icons/missionchief_icon.png")
-        if os.path.exists(logo_path):
-            self._pixmap = QPixmap(logo_path).scaled(
-                24, 24,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        bg = QLinearGradient(0, 0, self.width(), self.height())
-        bg.setColorAt(0.0, QColor("#6C5CE7"))
-        bg.setColorAt(1.0, QColor("#A855F7"))
-        p.setBrush(QBrush(bg))
-        p.setPen(Qt.PenStyle.NoPen)
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, self.width(), self.height(), 10, 10)
-        p.drawPath(path)
-
-        if self._pixmap:
-            x = (self.width() - self._pixmap.width()) // 2
-            y = (self.height() - self._pixmap.height()) // 2
-            p.drawPixmap(x, y, self._pixmap)
-
-        p.end()
-
-
-class BreadcrumbDot(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(4, 4)
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(QBrush(QColor("#2A2540")))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(0, 0, 4, 4)
-        p.end()
-
-
-class TitleBar(QWidget):
+class TitleBar(QFrame):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-        self.setFixedHeight(52)
-        self.setStyleSheet("background: transparent;")
-
-        self.dragging = False
-        self.offset = QPoint()
-        self._double_click_timer = QTimer()
-        self._double_click_timer.setSingleShot(True)
+        self._drag_offset = None
+        self.setObjectName("TopBar")
+        self.setFixedHeight(64)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 8, 12, 8)
-        layout.setSpacing(0)
+        layout.setContentsMargins(18, 10, 14, 10)
+        layout.setSpacing(11)
 
-        logo_section = QHBoxLayout()
-        logo_section.setSpacing(12)
-        logo_section.setContentsMargins(0, 0, 0, 0)
+        self.logo = QLabel("MH")
+        self.logo.setObjectName("BrandMark")
+        self.logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.logo.setFixedSize(38, 38)
+        layout.addWidget(self.logo)
 
-        self.logo = AppLogo()
-        logo_section.addWidget(self.logo)
-
-        title_block = QWidget()
-        title_block.setStyleSheet("background: transparent;")
+        title_block = QFrame()
+        title_block.setStyleSheet("background: transparent; border: 0;")
         title_layout = QHBoxLayout(title_block)
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(8)
-
-        self.title = QLabel("Mission Helper")
-        self.title.setStyleSheet("""
-            QLabel {
-                color: #F1F0F5;
-                font-size: 14px;
-                font-weight: 700;
-                background: transparent;
-                letter-spacing: 0.3px;
-            }
-        """)
+        self.title = QLabel(tr("app_name"))
+        self.title.setObjectName("BrandTitle")
+        self.page_label = QLabel(tr("dashboard"))
+        self.page_label.setObjectName("Muted")
         title_layout.addWidget(self.title)
-
-        dot = BreadcrumbDot()
-        title_layout.addWidget(dot, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        self.page_label = QLabel("Dashboard")
-        self.page_label.setStyleSheet("""
-            QLabel {
-                color: #4A4458;
-                font-size: 12px;
-                font-weight: 500;
-                background: transparent;
-            }
-        """)
+        title_layout.addWidget(QLabel("/") , alignment=Qt.AlignmentFlag.AlignVCenter)
         title_layout.addWidget(self.page_label)
-
-        logo_section.addWidget(title_block)
-        layout.addLayout(logo_section)
-
+        layout.addWidget(title_block)
         layout.addStretch()
 
-        controls = QHBoxLayout()
-        controls.setSpacing(6)
-        controls.setContentsMargins(0, 0, 0, 0)
+        self.connection_label = QLabel(f"●  {tr('connected')}")
+        self.connection_label.setObjectName("ConnectionLabel")
+        layout.addWidget(self.connection_label)
+        layout.addSpacing(12)
 
-        self.minimize_btn = WindowButton("minimize")
-        self.minimize_btn.setToolTip("Minimize")
-        self.minimize_btn.clicked.connect(self.parent.showMinimized)
+        self.minimize_btn = self._make_button("minimize", tr("minimize"), self.parent.showMinimized)
+        self.maximize_btn = self._make_button("maximize", tr("maximize"), self._toggle_maximize)
+        self.close_btn = self._make_button("close", tr("close"), self.parent.close)
+        self.close_btn.setObjectName("CloseButton")
+        layout.addWidget(self.minimize_btn)
+        layout.addWidget(self.maximize_btn)
+        layout.addWidget(self.close_btn)
 
-        self.maximize_btn = WindowButton("maximize")
-        self.maximize_btn.setToolTip("Maximize")
-        self.maximize_btn.clicked.connect(self._toggle_maximize)
+    def _make_button(self, icon_name, tooltip, callback):
+        button = QPushButton()
+        button.setObjectName("IconButton")
+        button.setFixedSize(30, 30)
+        button.setIconSize(icon_size(16))
+        button.setToolTip(tooltip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(callback)
+        button.setProperty("icon_name", icon_name)
+        self._set_icon(button, icon_name)
+        return button
 
-        self.close_btn = WindowButton("close")
-        self.close_btn.setToolTip("Close")
-        self.close_btn.clicked.connect(self.parent.close)
+    @staticmethod
+    def _icon_color():
+        theme = THEMES[current_theme_name(get_setting("theme", "ocean"))]
+        return theme.muted
 
-        controls.addWidget(self.minimize_btn)
-        controls.addWidget(self.maximize_btn)
-        controls.addWidget(self.close_btn)
-
-        layout.addLayout(controls)
+    def _set_icon(self, button, icon_name):
+        button.setIcon(icon(icon_name, self._icon_color(), 20))
 
     def set_page(self, name):
         self.page_label.setText(name)
+
+    def refresh_text(self):
+        self.title.setText(tr("app_name"))
+        self.connection_label.setText(f"●  {tr('connected')}")
+        self.minimize_btn.setToolTip(tr("minimize"))
+        self.maximize_btn.setToolTip(tr("maximize"))
+        self.close_btn.setToolTip(tr("close"))
+        self._set_icon(self.minimize_btn, "minimize")
+        self._set_icon(self.maximize_btn, "maximize")
+        self._set_icon(self.close_btn, "close")
 
     def _toggle_maximize(self):
         if self.parent.isMaximized():
@@ -243,35 +92,27 @@ class TitleBar(QWidget):
         else:
             self.parent.showMaximized()
 
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        gradient = QLinearGradient(0, self.height(), 0, 0)
-        gradient.setColorAt(0.0, QColor(14, 12, 21, 0))
-        gradient.setColorAt(1.0, QColor(14, 12, 21, 40))
-        p.setBrush(QBrush(gradient))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRect(0, 0, self.width(), self.height())
-
-        p.end()
-
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.dragging = True
-            self.offset = event.globalPosition().toPoint() - self.parent.frameGeometry().topLeft()
+            self._drag_offset = event.globalPosition().toPoint() - self.parent.frameGeometry().topLeft()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self.dragging and event.buttons() & Qt.MouseButton.LeftButton:
-            if self.parent.isMaximized():
-                self.parent.showNormal()
-                new_offset = QPoint(self.parent.width() // 2, self.offset.y())
-                self.offset = new_offset
-            self.parent.move(event.globalPosition().toPoint() - self.offset)
+        if self._drag_offset and event.buttons() & Qt.MouseButton.LeftButton:
+            self.parent.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        self.dragging = False
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._toggle_maximize()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)

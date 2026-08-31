@@ -1,1 +1,5 @@
-ÿþ
+PyQt6>=6.7,<7
+PyQt6-WebEngine>=6.7,<7
+requests>=2.31,<3
+psutil>=5.9,<8
+pyinstaller>=6.0,<7

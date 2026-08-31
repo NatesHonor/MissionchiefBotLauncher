@@ -4,9 +4,14 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QWidget, QGraphicsDropShadowEffect, QPushButton
 )
+from PyQt6.QtWidgets import QDialogButtonBox
+
+from ui.theme import current_theme_name, stylesheet
+from utils.localization import tr
+from utils.settings_store import get as get_setting
 
 
-def show_input_dialog(title="Input", prompt="Enter value:", placeholder="", parent=None):
+def _legacy_show_input_dialog(title="Input", prompt="Enter value:", placeholder="", parent=None):
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
     dialog.setFixedSize(400, 220)
@@ -35,9 +40,9 @@ def show_input_dialog(title="Input", prompt="Enter value:", placeholder="", pare
     container.setGeometry(0, 0, 400, 220)
     container.setStyleSheet("""
         QWidget {
-            background-color: #13111C;
+            background-color: #0B1B2D;
             border-radius: 14px;
-            border: 1px solid #2A2540;
+            border: 1px solid #1D3B5B;
         }
     """)
 
@@ -56,7 +61,7 @@ def show_input_dialog(title="Input", prompt="Enter value:", placeholder="", pare
     accent.setStyleSheet("""
         QWidget {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #6C5CE7, stop:0.5 #A855F7, stop:1 #EC4899);
+                stop:0 #1D65D8, stop:0.5 #2583E8, stop:1 #21B8D4);
             border: none; border-radius: 0;
         }
     """)
@@ -65,7 +70,7 @@ def show_input_dialog(title="Input", prompt="Enter value:", placeholder="", pare
     title_label = QLabel(title)
     title_label.setStyleSheet("""
         QLabel {
-            color: #F1F0F5; font-size: 16px; font-weight: 700;
+            color: #EAF4FF; font-size: 16px; font-weight: 700;
             background: transparent; border: none;
         }
     """)
@@ -74,7 +79,7 @@ def show_input_dialog(title="Input", prompt="Enter value:", placeholder="", pare
     prompt_label = QLabel(prompt)
     prompt_label.setStyleSheet("""
         QLabel {
-            color: #7C7A85; font-size: 13px;
+            color: #7F9DB8; font-size: 13px;
             background: transparent; border: none;
         }
     """)
@@ -85,13 +90,13 @@ def show_input_dialog(title="Input", prompt="Enter value:", placeholder="", pare
     input_field.setFixedHeight(40)
     input_field.setStyleSheet("""
         QLineEdit {
-            background-color: #08070D; color: #C9C8D0;
-            border: 1px solid #1E1B2E; border-radius: 8px;
+            background-color: #07111F; color: #C7D8EA;
+            border: 1px solid #1D3B5B; border-radius: 8px;
             padding: 0 12px; font-size: 13px;
             font-family: 'Segoe UI', sans-serif;
-            selection-background-color: #6C5CE7;
+            selection-background-color: #2583E8;
         }
-        QLineEdit:focus { border-color: #6C5CE7; }
+        QLineEdit:focus { border-color: #2583E8; }
     """)
     layout.addWidget(input_field)
 
@@ -103,11 +108,11 @@ def show_input_dialog(title="Input", prompt="Enter value:", placeholder="", pare
     cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
     cancel_btn.setStyleSheet("""
         QPushButton {
-            background: transparent; color: #6B6878;
+            background: transparent; color: #7890AD;
             font-size: 13px; font-weight: 600;
-            border: 1px solid #2A2540; border-radius: 8px; padding: 0 20px;
+            border: 1px solid #1D3B5B; border-radius: 8px; padding: 0 20px;
         }
-        QPushButton:hover { color: #9CA3AF; border-color: #3D3756; background: #1A1726; }
+        QPushButton:hover { color: #A8BCD1; border-color: #2D537A; background: #102640; }
     """)
     cancel_btn.clicked.connect(dialog.reject)
     btn_row.addWidget(cancel_btn)
@@ -118,13 +123,13 @@ def show_input_dialog(title="Input", prompt="Enter value:", placeholder="", pare
     confirm_btn.setStyleSheet("""
         QPushButton {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #6C5CE7, stop:0.5 #A855F7, stop:1 #EC4899);
+                stop:0 #1D65D8, stop:0.5 #2583E8, stop:1 #21B8D4);
             color: #FFFFFF; font-size: 13px; font-weight: 700;
             border: none; border-radius: 8px; padding: 0 24px;
         }
         QPushButton:hover {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #7C6CF7, stop:0.5 #B86AF7, stop:1 #F472B6);
+                stop:0 #3B82F6, stop:0.5 #4BA3FF, stop:1 #32B9E8);
         }
     """)
 
@@ -145,3 +150,48 @@ def show_input_dialog(title="Input", prompt="Enter value:", placeholder="", pare
     if dialog.exec() == QDialog.DialogCode.Accepted:
         return dialog._result
     return None
+
+
+def show_input_dialog(title=None, prompt=None, placeholder="", parent=None):
+    """Show a compact, themed input dialog and return text or None."""
+
+    dialog = QDialog(parent)
+    dialog.setObjectName("InputDialog")
+    dialog.setWindowTitle(title or tr("input"))
+    dialog.setMinimumWidth(440)
+    dialog.setModal(True)
+    dialog.setStyleSheet(stylesheet(current_theme_name(get_setting("theme", "ocean"))))
+
+    layout = QVBoxLayout(dialog)
+    layout.setContentsMargins(24, 22, 24, 20)
+    layout.setSpacing(12)
+
+    title_label = QLabel(title or tr("input"))
+    title_label.setObjectName("PageTitle")
+    layout.addWidget(title_label)
+
+    prompt_label = QLabel(prompt or tr("enter_value"))
+    prompt_label.setObjectName("Hint")
+    prompt_label.setWordWrap(True)
+    layout.addWidget(prompt_label)
+
+    input_field = QLineEdit()
+    input_field.setPlaceholderText(placeholder)
+    input_field.setClearButtonEnabled(True)
+    layout.addWidget(input_field)
+
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
+    )
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("cancel"))
+    buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("confirm"))
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+
+    input_field.returnPressed.connect(dialog.accept)
+    input_field.setFocus()
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    value = input_field.text().strip()
+    return value or None
