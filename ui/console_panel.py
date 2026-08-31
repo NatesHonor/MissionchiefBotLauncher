@@ -1,445 +1,218 @@
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import (
-    QFont, QColor, QPainter, QPainterPath, QLinearGradient,
-    QBrush, QPen, QRadialGradient, QTextCursor
-)
-from PyQt6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel,
-    QTextEdit, QWidget, QGraphicsDropShadowEffect
-)
+import html
+import threading
+
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QTextCursor
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout
 
 from handlers.console import set_console_instance
-from utils.start import update_start_button_state, run_start_logic
+from ui.icons import icon, icon_size
+from ui.theme import THEMES, current_theme_name
+from utils.localization import tr
+from utils.settings_store import get as get_setting
+from utils.start import run_start_logic
 from utils.stop_bot import stop_bot
-
-
-class ConsoleHeader(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(42)
-        self._pulse = 0
-        self._direction = 1
-        self._active = False
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._animate)
-        self._timer.start(40)
-
-    def set_active(self, active):
-        self._active = active
-        self.update()
-
-    def _animate(self):
-        if self._active:
-            self._pulse += self._direction * 2
-            if self._pulse >= 100:
-                self._direction = -1
-            elif self._pulse <= 0:
-                self._direction = 1
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        dot_x, dot_y = 0, 15
-        if self._active:
-            pulse_factor = self._pulse / 100.0
-            glow = QRadialGradient(dot_x + 5, dot_y + 5, 12)
-            glow.setColorAt(0.0, QColor(34, 197, 94, int(20 + pulse_factor * 30)))
-            glow.setColorAt(1.0, QColor(34, 197, 94, 0))
-            p.setBrush(QBrush(glow))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(dot_x - 7, dot_y - 7, 24, 24)
-
-            p.setBrush(QBrush(QColor("#22C55E")))
-        else:
-            p.setBrush(QBrush(QColor("#6C5CE7")))
-
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(dot_x + 1, dot_y + 1, 8, 8)
-
-        font = QFont("Segoe UI", 13)
-        font.setWeight(QFont.Weight.Bold)
-        p.setFont(font)
-        p.setPen(QColor("#F1F0F5"))
-        p.drawText(18, 0, self.width() - 18, self.height(), Qt.AlignmentFlag.AlignVCenter, "Console")
-
-        tag_font = QFont("Segoe UI", 9)
-        tag_font.setWeight(QFont.Weight.DemiBold)
-        tag_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
-        p.setFont(tag_font)
-
-        tag_text = "LIVE" if self._active else "IDLE"
-        tag_color = QColor("#22C55E") if self._active else QColor("#4A4458")
-        tag_bg = QColor(34, 197, 94, 20) if self._active else QColor(74, 68, 88, 15)
-        tag_border = QColor(34, 197, 94, 50) if self._active else QColor(74, 68, 88, 40)
-
-        metrics = p.fontMetrics()
-        tag_w = metrics.horizontalAdvance(tag_text) + 20
-        tag_h = 22
-        tag_x = self.width() - tag_w - 4
-        tag_y = (self.height() - tag_h) // 2
-
-        tag_path = QPainterPath()
-        tag_path.addRoundedRect(tag_x, tag_y, tag_w, tag_h, 11, 11)
-        p.setBrush(QBrush(tag_bg))
-        p.setPen(QPen(tag_border, 1))
-        p.drawPath(tag_path)
-
-        p.setPen(tag_color)
-        p.drawText(tag_x, tag_y, tag_w, tag_h, Qt.AlignmentFlag.AlignCenter, tag_text)
-
-        p.end()
 
 
 class ConsoleOutput(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("ConsoleOutput")
         self.setReadOnly(True)
-        self.setStyleSheet("""
-            QTextEdit {
-                background-color: #08070D;
-                color: #C9C8D0;
-                border: 1px solid #1A1726;
-                border-radius: 10px;
-                padding: 12px 14px;
-                font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-                font-size: 12px;
-                line-height: 1.6;
-                selection-background-color: #6C5CE7;
-                selection-color: #FFFFFF;
-            }
-            QScrollBar:vertical {
-                background: transparent;
-                width: 6px;
-                margin: 4px 2px;
-                border-radius: 3px;
-            }
-            QScrollBar::handle:vertical {
-                background: #2A2540;
-                border-radius: 3px;
-                min-height: 40px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #6C5CE7;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical,
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: transparent;
-                height: 0;
-                border: none;
-            }
-        """)
+        self.setPlaceholderText(tr("console_placeholder"))
 
+    @pyqtSlot(str, str)
     def append_message(self, message, level="info"):
-        colors = {
-            "info": "#C9C8D0",
-            "success": "#22C55E",
-            "warning": "#F59E0B",
-            "error": "#EF4444",
-            "system": "#6C5CE7",
-            "debug": "#4A4458",
-        }
+        colors = {"info": "#B9D1E7", "success": "#35D399", "warning": "#F6C453", "error": "#F06B7A", "system": "#4BA3FF", "debug": "#7F9DB8"}
+        prefixes = {"info": "›", "success": "✓", "warning": "!", "error": "×", "system": "•", "debug": "·"}
         color = colors.get(level, colors["info"])
-
-        prefixes = {
-            "info": "›",
-            "success": "✓",
-            "warning": "⚠",
-            "error": "✗",
-            "system": "◆",
-            "debug": "·",
-        }
         prefix = prefixes.get(level, "›")
-
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%H:%M:%S")
-
-        html = f"""
-            <div style="margin: 2px 0; line-height: 1.5;">
-                <span style="color: #3D3756; font-size: 11px;">{timestamp}</span>
-                <span style="color: {color}; font-weight: 600;"> {prefix} </span>
-                <span style="color: {color};">{message}</span>
-            </div>
-        """
         self.moveCursor(QTextCursor.MoveOperation.End)
-        self.insertHtml(html)
+        self.insertHtml(
+            f'<div style="margin:2px 0;color:{color};"><b>{prefix}</b>&nbsp;{html.escape(str(message))}</div>'
+        )
         self.ensureCursorVisible()
 
 
-class ActionBar(QWidget):
+class StatusFooter(QFrame):
+    _message_signal = pyqtSignal(str, str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(48)
-        self._running = False
-
-    def set_running(self, running):
-        self._running = running
-        self.update()
-
-
-class ControlButton(QWidget):
-    clicked = None
-
-    def __init__(self, text="Start Bot", parent=None):
-        super().__init__(parent)
-        from PyQt6.QtCore import pyqtSignal
-        self.__class__.clicked = pyqtSignal()
-        self.setFixedHeight(42)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._text = text
-        self._running = False
-        self._hovered = False
-        self._pressed = False
-
-    def set_running(self, running):
-        self._running = running
-        self._text = "Stop Bot" if running else "Start Bot"
-        self.update()
-
-    def enterEvent(self, event):
-        self._hovered = True
-        self.update()
-
-    def leaveEvent(self, event):
-        self._hovered = False
-        self._pressed = False
-        self.update()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._pressed = True
-            self.update()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._pressed:
-            self._pressed = False
-            self.update()
-            if hasattr(self, '_click_callback') and self._click_callback:
-                self._click_callback()
-
-    def set_click_callback(self, callback):
-        self._click_callback = callback
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        bg = QPainterPath()
-        bg.addRoundedRect(0, 0, self.width(), self.height(), 10, 10)
-
-        if self._running:
-            if self._pressed:
-                g = QLinearGradient(0, 0, self.width(), 0)
-                g.setColorAt(0.0, QColor("#B91C1C"))
-                g.setColorAt(1.0, QColor("#991B1B"))
-            elif self._hovered:
-                g = QLinearGradient(0, 0, self.width(), 0)
-                g.setColorAt(0.0, QColor("#F87171"))
-                g.setColorAt(1.0, QColor("#EF4444"))
-            else:
-                g = QLinearGradient(0, 0, self.width(), 0)
-                g.setColorAt(0.0, QColor("#EF4444"))
-                g.setColorAt(1.0, QColor("#DC2626"))
-        else:
-            if self._pressed:
-                g = QLinearGradient(0, 0, self.width(), 0)
-                g.setColorAt(0.0, QColor("#4338CA"))
-                g.setColorAt(0.5, QColor("#7E22CE"))
-                g.setColorAt(1.0, QColor("#BE185D"))
-            elif self._hovered:
-                g = QLinearGradient(0, 0, self.width(), 0)
-                g.setColorAt(0.0, QColor("#7C6CF7"))
-                g.setColorAt(0.5, QColor("#B86AF7"))
-                g.setColorAt(1.0, QColor("#F472B6"))
-            else:
-                g = QLinearGradient(0, 0, self.width(), 0)
-                g.setColorAt(0.0, QColor("#6C5CE7"))
-                g.setColorAt(0.5, QColor("#A855F7"))
-                g.setColorAt(1.0, QColor("#EC4899"))
-
-        p.setBrush(QBrush(g))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawPath(bg)
-
-        icon_x = 16
-        icon_cy = self.height() / 2
-        p.setPen(QPen(QColor("#FFFFFF"), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-
-        if self._running:
-            bx, by = icon_x, int(icon_cy - 5)
-            p.setBrush(QBrush(QColor("#FFFFFF")))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(bx, by, 10, 10, 2, 2)
-        else:
-            bx, by = icon_x, int(icon_cy - 6)
-            path = QPainterPath()
-            path.moveTo(bx, by)
-            path.lineTo(bx + 12, by + 6)
-            path.lineTo(bx, by + 12)
-            path.closeSubpath()
-            p.setBrush(QBrush(QColor("#FFFFFF")))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawPath(path)
-
-        font = QFont("Segoe UI", 13)
-        font.setWeight(QFont.Weight.Bold)
-        p.setFont(font)
-        p.setPen(QColor("#FFFFFF"))
-        p.drawText(36, 0, self.width() - 48, self.height(), Qt.AlignmentFlag.AlignVCenter, self._text)
-
-        p.end()
-
-
-class StatusFooter(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(28)
-        self._message = "Ready"
+        self.setObjectName("StatusFooter")
+        self._message = tr("ready")
         self._level = "idle"
+        self._label = QLabel(self._message)
+        self._label.setObjectName("Muted")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self._dot = QLabel("●")
+        self._dot.setObjectName("StatusDot")
+        layout.addWidget(self._dot)
+        layout.addWidget(self._label)
+        layout.addStretch()
+        self._message_signal.connect(self._apply_message)
+        self._apply_message(self._message, self._level)
 
     def set_message(self, text, level="info"):
-        self._message = text
-        self._level = level
-        self.update()
+        self._apply_message(str(text), level)
 
     def showMessage(self, text):
-        self.set_message(text)
+        self._message_signal.emit(str(text), "info")
 
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        colors = {
-            "idle": "#3D3756",
-            "info": "#6C5CE7",
-            "success": "#22C55E",
-            "warning": "#F59E0B",
-            "error": "#EF4444",
-        }
-        color = QColor(colors.get(self._level, colors["idle"]))
-
-        p.setBrush(QBrush(color))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(0, 10, 6, 6)
-
-        font = QFont("Segoe UI", 11)
-        font.setWeight(QFont.Weight.Medium)
-        p.setFont(font)
-        p.setPen(QColor("#6B6878"))
-        p.drawText(14, 0, self.width() - 14, self.height(), Qt.AlignmentFlag.AlignVCenter, self._message)
-
-        p.end()
-
-
-class ClearButton(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(32, 32)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._hovered = False
-        self._callback = None
-        self.setToolTip("Clear Console")
-
-    def set_click_callback(self, callback):
-        self._callback = callback
-
-    def enterEvent(self, event):
-        self._hovered = True
-        self.update()
-
-    def leaveEvent(self, event):
-        self._hovered = False
-        self.update()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._callback:
-            self._callback()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        if self._hovered:
-            bg = QPainterPath()
-            bg.addRoundedRect(0, 0, 32, 32, 8, 8)
-            p.setBrush(QBrush(QColor("#1A1726")))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawPath(bg)
-
-        color = QColor("#9CA3AF") if self._hovered else QColor("#4A4458")
-        p.setPen(QPen(color, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-
-        cx, cy = 16, 16
-        p.drawRoundedRect(cx - 5, cy - 3, 10, 8, 1.5, 1.5)
-        p.drawLine(cx - 6, cy - 3, cx + 6, cy - 3)
-        p.drawLine(cx - 2, cy - 6, cx + 2, cy - 6)
-        p.drawLine(cx - 2, cy, cx - 2, cy + 3)
-        p.drawLine(cx + 2, cy, cx + 2, cy + 3)
-
-        p.end()
+    @pyqtSlot(str, str)
+    def _apply_message(self, text, level="info"):
+        self._message = text
+        self._level = level
+        self._label.setText(text)
+        self._dot.setStyleSheet({
+            "success": "color:#35D399;", "warning": "color:#F6C453;", "error": "color:#F06B7A;",
+            "idle": "color:#4B6A84;", "info": "color:#4BA3FF;",
+        }.get(level, "color:#4BA3FF;"))
 
 
 class ConsolePanel(QFrame):
+    _started_signal = pyqtSignal()
+    _failed_signal = pyqtSignal(str)
+    _finished_signal = pyqtSignal(int)
+    _stopped_signal = pyqtSignal()
+
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-        self.setStyleSheet("background: transparent; border: none;")
-
+        self._operation_active = False
+        self._stop_thread = None
+        self.setObjectName("Card")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
 
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(8)
-
-        self.header = ConsoleHeader()
-        header_row.addWidget(self.header, 1)
-
-        self.clear_btn = ClearButton()
-        self.clear_btn.set_click_callback(self._clear_console)
-        header_row.addWidget(self.clear_btn)
-
-        layout.addLayout(header_row)
+        header = QHBoxLayout()
+        self.heading = QLabel(tr("console"))
+        self.heading.setObjectName("CardTitle")
+        header.addWidget(self.heading)
+        header.addStretch()
+        self.live_label = QLabel(tr("idle"))
+        self.live_label.setObjectName("StatusBadge")
+        header.addWidget(self.live_label)
+        self.clear_btn = QPushButton()
+        self.clear_btn.setObjectName("IconButton")
+        self.clear_btn.setIconSize(icon_size(16))
+        self._set_clear_icon()
+        self.clear_btn.setToolTip(tr("clear_console"))
+        self.clear_btn.clicked.connect(self._clear_console)
+        header.addWidget(self.clear_btn)
+        layout.addLayout(header)
 
         self.console = ConsoleOutput()
         layout.addWidget(self.console, 1)
         set_console_instance(self.console)
 
-        footer_layout = QHBoxLayout()
-        footer_layout.setContentsMargins(0, 0, 0, 0)
-        footer_layout.setSpacing(12)
-
-        self.control_btn = ControlButton("Start Bot")
-        self.control_btn.set_click_callback(self.toggle_start_stop)
-        self.control_btn.setFixedWidth(160)
-        footer_layout.addWidget(self.control_btn)
-
+        footer = QHBoxLayout()
+        self.control_btn = QPushButton(tr("start_bot"))
+        self.control_btn.setObjectName("PrimaryButton")
+        self.control_btn.setMinimumWidth(150)
+        self.control_btn.clicked.connect(self.toggle_start_stop)
+        footer.addWidget(self.control_btn)
         self.status_bar = StatusFooter()
-        footer_layout.addWidget(self.status_bar, 1)
+        footer.addWidget(self.status_bar, 1)
+        layout.addLayout(footer)
 
-        layout.addLayout(footer_layout)
+        self._started_signal.connect(self._on_bot_started)
+        self._failed_signal.connect(self._on_start_failed)
+        self._finished_signal.connect(self._on_bot_finished)
+        self._stopped_signal.connect(self._on_bot_stopped)
+
+    def _set_button_style(self, running):
+        self.control_btn.setObjectName("DangerButton" if running else "PrimaryButton")
+        self.control_btn.style().unpolish(self.control_btn)
+        self.control_btn.style().polish(self.control_btn)
+        self.control_btn.setText(tr("stop_bot" if running else "start_bot"))
 
     def toggle_start_stop(self):
-        self.parent.is_running = not self.parent.is_running
-        self.control_btn.set_running(self.parent.is_running)
-        self.header.set_active(self.parent.is_running)
+        if self._operation_active or self.parent.is_running:
+            self._begin_stop()
+            return
+        self._operation_active = True
+        self.control_btn.setText(tr("starting"))
+        self.status_bar.set_message(tr("starting"), "info")
+        try:
+            self._start_thread = run_start_logic(
+                self.status_bar,
+                on_started=lambda: self._started_signal.emit(),
+                on_finished=lambda code: self._finished_signal.emit(int(code)),
+                on_failed=lambda message: self._failed_signal.emit(str(message)),
+            )
+            if self._start_thread is None and not self._operation_active:
+                self._on_start_failed(tr("startup_failed"))
+        except Exception as exc:
+            self._on_start_failed(str(exc))
 
-        if hasattr(self.parent, 'set_running'):
-            self.parent.set_running(self.parent.is_running)
+    def _begin_stop(self):
+        if self._stop_thread and self._stop_thread.is_alive():
+            return
+        self._operation_active = True
+        self.control_btn.setEnabled(False)
+        self.status_bar.set_message(tr("stop_bot"), "warning")
+        self._stop_thread = threading.Thread(
+            target=stop_bot,
+            kwargs={"on_complete": lambda: self._stopped_signal.emit()},
+            name="BotStopThread",
+            daemon=True,
+        )
+        self._stop_thread.start()
 
-        if self.parent.is_running:
-            self.status_bar.set_message("Bot started", "success")
-            run_start_logic(self.status_bar)
-        else:
-            stop_bot()
-            self.status_bar.set_message("Bot stopped", "idle")
+    @pyqtSlot()
+    def _on_bot_started(self):
+        self._operation_active = True
+        self.parent.set_running(True)
+        self.control_btn.setEnabled(True)
+        self._set_button_style(True)
+        self.live_label.setText(tr("running"))
+        self.status_bar.set_message(tr("running"), "success")
+
+    @pyqtSlot(str)
+    def _on_start_failed(self, message):
+        self._operation_active = False
+        self.parent.set_running(False)
+        self.control_btn.setEnabled(True)
+        self._set_button_style(False)
+        self.live_label.setText(tr("idle"))
+        self.status_bar.set_message(message or tr("ready"), "error")
+
+    @pyqtSlot(int)
+    def _on_bot_finished(self, returncode):
+        self._operation_active = False
+        self.parent.set_running(False)
+        self.control_btn.setEnabled(True)
+        self._set_button_style(False)
+        self.live_label.setText(tr("idle"))
+        self.status_bar.set_message(tr("ready") if returncode == 0 else f"Exit code {returncode}", "idle" if returncode == 0 else "error")
+
+    @pyqtSlot()
+    def _on_bot_stopped(self):
+        self._operation_active = False
+        self.parent.set_running(False)
+        self.control_btn.setEnabled(True)
+        self._set_button_style(False)
+        self.live_label.setText(tr("idle"))
+        self.status_bar.set_message(tr("ready"), "idle")
+
+    def refresh_text(self):
+        self.heading.setText(tr("console"))
+        self.console.setPlaceholderText(tr("console_placeholder"))
+        self.clear_btn.setToolTip(tr("clear_console"))
+        self._set_clear_icon()
+        self.live_label.setText(tr("running" if self.parent.is_running else "idle"))
+        self._set_button_style(self.parent.is_running)
+        if not self._operation_active and not self.parent.is_running:
+            self.status_bar.set_message(tr("ready"), "idle")
 
     def _clear_console(self):
         self.console.clear()
-        self.console.append_message("Console cleared", "system")
+        self.console.append_message(tr("console_cleared"), "system")
+
+    def _set_clear_icon(self):
+        theme = THEMES[current_theme_name(get_setting("theme", "ocean"))]
+        self.clear_btn.setIcon(icon("trash", theme.muted, 20))
